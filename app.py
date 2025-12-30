@@ -42,7 +42,7 @@ def init_gemini():
 # 初始化模型
 model = init_gemini()
 
-# --- 2. 詞庫設定 (詞庫快速標註模式使用) ---
+# --- 2. 詞庫設定 (把漏掉的詞補進去) ---
 def load_dictionary():
     return {
         "視頻": "影片", "質量": "品質", "軟件": "軟體", "計算機": "電腦",
@@ -50,8 +50,28 @@ def load_dictionary():
         "水平": "水準", "立馬": "立刻", "特好": "很好", 
         "牛逼": "厲害", "牛逼的": "很強的", "很牛": "很強",
         "肯定": "一定", "估計": "大概", "合同": "合約",
-        "驚訝到": "嚇一跳", "驚訝到了": "嚇了一跳", "有被": "被"
+        "驚訝到": "嚇一跳", "驚訝到了": "嚇了一跳", "有被": "被",
+        "很火": "很紅", "火了": "紅了", "搞定": "處理好",
+        "親們": "大家", "給力": "給力/帶勁", "走起": "出發/開始"
     }
+
+# --- 3. 核心處理邏輯 (確保強制加入詞庫) ---
+def dictionary_process(text):
+    current_dict = load_dictionary()
+    
+    # 關鍵：強制讓 jieba 優先識別這些詞，避免「很火」被切成「很」和「火」
+    for key in current_dict.keys():
+        jieba.add_word(key)
+        
+    words = jieba.cut(text)
+    res = []
+    for w in words:
+        if w in current_dict:
+            # 找到對應詞，紅底標註
+            res.append(f":red-background[{current_dict[w]}({w})]")
+        else:
+            res.append(w)
+    return "".join(res)
 
 # --- 3. 核心處理邏輯 ---
 
@@ -124,4 +144,5 @@ with col2:
                 except Exception as e:
                     st.error(f"AI 處理錯誤: {e}")
     else:
+
         st.info("請在左側輸入文字後點擊轉換按鈕。")
