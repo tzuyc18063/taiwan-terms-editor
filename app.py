@@ -2,14 +2,9 @@ import streamlit as st
 import google.generativeai as genai
 import re
 
-# --- 1. 頁面配置 ---
-st.set_page_config(
-    page_title="台灣用語 AI 智慧標註編輯器",
-    page_icon="🇹🇼",
-    layout="wide"
-)
+# --- 1. 設定與 AI 初始化 ---
+st.set_page_config(page_title="台灣用語 AI 智慧標註", page_icon="🇹🇼", layout="wide")
 
-# --- 2. AI 初始化與模型偵測 ---
 if "GOOGLE_API_KEY" in st.secrets:
     API_KEY = st.secrets["GOOGLE_API_KEY"]
 else:
@@ -18,87 +13,54 @@ else:
 genai.configure(api_key=API_KEY)
 
 @st.cache_resource
-def load_ai_model():
+def get_model():
     try:
         available = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        for target in ['models/gemini-1.5-flash', 'models/gemini-1.5-pro', 'models/gemini-pro']:
-            if target in available:
-                return genai.GenerativeModel(target)
-        return genai.GenerativeModel(available[0]) if available else None
-    except:
-        return None
+        target = next((t for t in ['models/gemini-1.5-flash', 'models/gemini-1.5-pro'] if t in available), available[0])
+        return genai.GenerativeModel(target)
+    except: return None
 
-model = load_ai_model()
+model = get_model()
 
-# --- 3. 核心標註邏輯 ---
-def ai_smart_tagging(text):
-    if not model:
-        return "AI 連線失敗，請檢查 API Key。"
-    
-    prompt = f"""
-    你是一位極度專業的台灣繁體中文編輯。
-    請找出文字中的「中國大陸用語」或「不道地的支式文法」（例如：噁心我、有被驚訝到、進行一個動作）。
-    
-    任務要求：
-    1. 將其轉換為道地的台灣本土說法。
-    2. 輸出時，凡是有改動的地方，必須使用 [台灣用語](大陸原始用語) 的格式呈現。
-    3. 沒改動的地方保持原樣。
-    4. 修正文法使其符合台灣口語習慣（包含語氣助詞、動詞用法）。
-
-    待處理文字：{text}
-    """
-    
+# --- 2. 標註邏輯 ---
+def ai_tagging(text):
+    if not model: return "AI 未連線"
+    p = f"你是一位台灣繁體中文編輯。找出大陸用語或支式文法（如：噁心我、有被驚訝到），將其轉為道地台灣說法。改動處必須使用 [台灣用語](原始語) 格式輸出。文字：{text}"
     try:
-        response = model.generate_content(prompt)
-        res_text = response.text
-        # 正規表達式：將 [新詞](舊詞) 轉換為紅底標籤
-        final_output = re.sub(r'\[(.*?)\]\((.*?)\)', r' :red-background[\1(\2)] ', res_text)
-        return final_output
-    except Exception as e:
-        return f"處理出錯：{e}"
+        resp = model.generate_content(p)
+        # 轉換標籤格式
+        return re.sub(r'\[(.*?)\]\((.*?)\)', r' :red-background[\1(\2)] ', resp.text)
+    except Exception as e: return f"錯誤: {e}"
 
-# --- 4. 介面設計 ---
-st.sidebar.title("⚙️ 控制面板")
-st.sidebar.info("本工具利用 AI 自動偵測並修正「大陸用語」與「支式文法」。")
+# --- 3. 介面設計 ---
+st.sidebar.title("⚙️ 設定面板")
+if model: st.sidebar.success(f"✅ AI 已連線 ({model.model_name})")
+else: st.sidebar.error("❌ AI 未連線")
 
-if model:
-    st.sidebar.success(f"✅ AI 模型已就緒\n({model.model_name})")
-else:
-    st.sidebar.error("❌ AI 未連線")
-
-st.sidebar.divider()
-st.sidebar.markdown("""
-**測試範例：**
-1. 這視頻質量特好。
-2. 他這番話有被驚訝到。
-3. 你不要噁心我。
-""")
-
-st.title("🇹🇼 台灣用語 AI 智慧標註編輯器")
+st.title("🇹🇼 台灣用語 AI 智慧標註")
 st.markdown("---")
 
-# 輸入區
-user_input = st.text_area(
-    "📝 請輸入要分析的內容：", 
-    height=250, 
-    placeholder="在此輸入文字，例如：這視頻真的很火，質量特好，有被驚訝到，你不要噁心我..."
-)
+user_input = st.text_area("📝 輸入文字：", height=200, placeholder="例如：這視頻質量特好，你不要噁心我...")
 
-if st.button("🚀 執行 AI 智慧掃描", use_container_width=True):
+if st.button("🚀 執行 AI 智慧分析", use_container_width=True):
     if user_input:
-        with st.spinner('AI 正在深度掃描語感與詞彙...'):
-            result = ai_smart_tagging(user_input)
-            
-            # 結果顯示區
+        with st.spinner('AI 正在分析...'):
+            res = ai_tagging(user_input)
             st.subheader("✨ 智慧標註結果")
-            st.markdown(f"> {result}")
+            st.markdown(res)
             
-            # 功能區
             st.divider()
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.subheader("📋 純淨台灣版")
-                # 移除標註標籤，只保留新詞
-                clean_text = re.sub(r' :red-background\[(.*?)\((.*?)\)\] ', r'\1', result)
-                st.code(clean_
+            c1, c2 = st.columns(2)
+            with c1:
+                st.subheader("📋 純淨版")
+                # 移除所有標記格式，只保留轉換後文字
+                clean = re.sub(r' :red-background\[(.*?)\((.*?)\)\] ', r'\1', res)
+                st.code(clean, language=None)
+            with c2:
+                st.subheader("🔍 修正細節")
+                matches = re.findall(r'\[(.*?)\]\((.*?)\)', res.replace(' :red-background', ''))
+                for n, o in matches: st.write(f"❌ `{o}` → ✅ `{n}`")
+    else: st.warning("請輸入內容")
+
+st.divider()
+st.caption("AI 技術支援：Gemini 智慧識別系統")
