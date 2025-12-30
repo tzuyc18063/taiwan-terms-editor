@@ -1,19 +1,20 @@
 import streamlit as st
 import google.generativeai as genai
+import re
 
-# --- 1. 初始化與 API 設定 ---
-st.set_page_config(page_title="台灣用語 AI 編輯器", page_icon="🇹🇼", layout="wide")
+# --- 1. 初始化設定 ---
+st.set_page_config(page_title="台灣用語 AI 智慧標註", page_icon="🇹🇼", layout="wide")
 
 if "GOOGLE_API_KEY" in st.secrets:
     API_KEY = st.secrets["GOOGLE_API_KEY"]
 else:
-    API_KEY = "你的正確金鑰" # 本地測試用
+    API_KEY = "你的正確金鑰"
 
 genai.configure(api_key=API_KEY)
 
-# 核心：自動尋找可用模型的連線邏輯
-def get_working_model():
+def get_model():
     try:
+        # 自動尋找可用模型
         available = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
         for target in ['models/gemini-1.5-flash', 'models/gemini-1.5-pro', 'models/gemini-pro']:
             if target in available:
@@ -22,66 +23,68 @@ def get_working_model():
     except:
         return None
 
-# --- 2. 詞庫轉換邏輯 ---
-def get_conversion(text):
-    dct = {
-        "視頻": "影片", "質量": "品質", "軟件": "軟體", "牛逼": "厲害",
-        "很火": "很紅", "水平": "水準", "估計": "大概", "立馬": "立刻",
-        "有被": "被", "親們": "大家", "特好": "很好", "搞定": "處理好",
-        "合同": "合約", "肯定": "一定", "軟件": "軟體", "硬件": "硬體"
-    }
-    res = text
-    for k in sorted(dct.keys(), key=len, reverse=True):
-        if k in res:
-            res = res.replace(k, f" :red-background[{dct[k]}({k})] ")
-    return res
+# --- 2. 智慧標註核心邏輯 ---
+def ai_smart_tagging(text):
+    model = get_model()
+    if not model:
+        return "AI 連線失敗，請檢查 API Key。"
+    
+    # 這是最強大的 Prompt，要求 AI 進行格式化標註
+    prompt = f"""
+    你是一位極度專業的台灣繁體中文編輯。
+    請找出以下文字中的「中國大陸用語」或「不道地的支式文法」（例如：噁心我、有被驚訝到、進行一個動作）。
+    
+    任務要求：
+    1. 將其轉換為道地的台灣本土說法。
+    2. 輸出時，凡是有改動的地方，必須使用 [台灣用語](大陸原始用語) 的格式呈現。
+    3. 沒改動的地方保持原樣。
+    4. 修正文法使其符合台灣口語習慣。
 
-# --- 3. 介面佈局 ---
-st.title("🇹🇼 智慧型台灣用語編輯器")
-st.markdown("這是一款結合 **詞庫精準標註** 與 **AI 語意潤飾** 的專業轉換工具。")
+    待處理文字：{text}
+    """
+    
+    try:
+        response = model.generate_content(prompt)
+        res_text = response.text
+        
+        # 使用正規表達式將 [新詞](舊詞) 轉換為 Streamlit 的紅底標籤
+        # 匹配 [xxx](yyy)
+        final_output = re.sub(r'\[(.*?)\]\((.*?)\)', r' :red-background[\1(\2)] ', res_text)
+        return final_output
+    except Exception as e:
+        return f"處理出錯：{e}"
+
+# --- 3. 網頁介面 ---
+st.title("🇹🇼 台灣用語 AI 智慧標註編輯器")
+st.markdown("""
+**功能說明：** 不再只是死板的比對詞庫，AI 會自動偵測：
+* **關鍵字：** 視頻、質量、軟件、牛逼...
+* **支式文法：** 有被驚訝到、你不要噁心我、水平很高...
+""")
 st.divider()
 
-# 側邊欄設定
-st.sidebar.title("⚙️ 設定")
-model = get_working_model()
-if model:
-    st.sidebar.success(f"✅ AI 狀態：已連線")
-    st.sidebar.caption(f"使用模型：{model.model_name}")
-else:
-    st.sidebar.error("❌ AI 未連線")
+user_input = st.text_area("📝 請輸入文字（包含想測試的文法）：", height=200, 
+                         placeholder="例如：這視頻質量特好，我也立馬有被驚訝到，你不要噁心我。")
 
-mode = st.sidebar.radio("轉換模式", ["同時顯示 (推薦)", "僅詞庫標註", "僅 AI 潤飾"])
-
-# 主輸入區
-user_input = st.text_area("📝 請輸入要處理的文字：", height=250, placeholder="例如：這視頻的質量特好，我也立馬被驚訝到了...")
-
-if st.button("🚀 執行轉換", use_container_width=True):
+if st.button("🚀 開始 AI 智慧分析", use_container_width=True):
     if user_input:
-        # 建立左右兩欄
-        col1, col2 = st.columns(2)
-        
-        if mode in ["同時顯示 (推薦)", "僅詞庫標註"]:
-            with col1:
-                st.subheader("📍 詞庫標註 (快速)")
-                st.info("根據台灣習慣用語詞庫進行標記。")
-                st.markdown(get_conversion(user_input))
-        
-        if mode in ["同時顯示 (推薦)", "僅 AI 潤飾"]:
-            with col2:
-                st.subheader("🤖 AI 深度潤飾 (流暢)")
-                st.info("修正支式文法，語氣轉換為道地台灣口語。")
-                if model:
-                    with st.spinner('AI 正在思考中...'):
-                        try:
-                            prompt = f"你是一位台灣繁體中文編輯。將以下文字的大陸用語徹底轉為台灣道地說法，修正文法並保持流暢：\n\n{user_input}"
-                            ai_res = model.generate_content(prompt)
-                            st.success(ai_res.text)
-                        except Exception as e:
-                            st.error(f"生成失敗：{e}")
-                else:
-                    st.warning("AI 模型不可用，請檢查 API Key。")
+        with st.spinner('AI 正在深度掃描語法與用語...'):
+            result = ai_smart_tagging(user_input)
+            
+            st.subheader("✨ 分析結果")
+            st.info("註：紅底部分為 AI 自動識別出的調整建議，括號內為原詞。")
+            st.markdown(f"### {result}")
+            
+            # 額外提供一份純淨版，方便複製
+            st.divider()
+            with st.expander("查看純淨台灣版（無標註）"):
+                # 移除括號標註，只留新詞
+                clean_text = re.sub(r' :red-background\[(.*?)\((.*?)\)\] ', r'\1', result)
+                st.write(clean_text)
+                if st.button("複製純淨文字"):
+                    st.write("（請直接選取上方文字複製）")
     else:
-        st.warning("請輸入內容後再點擊轉換。")
+        st.warning("請先輸入文字")
 
 st.divider()
-st.caption("核心技術：Gemini AI + Python Streamlit | 您的專屬語言助手")
+st.caption("現在這個版本已具備語意理解能力，連「噁心我」這種文法錯誤
