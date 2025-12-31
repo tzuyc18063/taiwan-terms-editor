@@ -3,8 +3,18 @@ import google.generativeai as genai
 import re
 import json
 
-# --- 1. 配置與模型鎖定 ---
+# --- 1. 頁面配置與本地詞庫 ---
 st.set_page_config(page_title="語感守護者", page_icon="📱", layout="wide")
+
+# 建立本地備援詞庫 (即使 AI 掛掉也能運作)
+LOCAL_DICT = {
+    "視頻": "影片", "質量": "品質", "軟件": "軟體", "牛逼": "厲害",
+    "立馬": "立刻", "特好": "很好", "優化": "調整"
+}
+# 本地歧義詞
+LOCAL_AMBIGUOUS = {
+    "土豆": {"choices": ["馬鈴薯", "花生"], "desc": "中國指馬鈴薯，台灣指花生"}
+}
 
 if "GOOGLE_API_KEY" in st.secrets:
     API_KEY = st.secrets["GOOGLE_API_KEY"]
@@ -15,117 +25,76 @@ genai.configure(api_key=API_KEY)
 
 # 狀態管理
 if 'current_text' not in st.session_state: st.session_state.current_text = ""
-if 'analysis_results' not in st.session_state: st.session_state.analysis_results = {}
 if 'is_analyzed' not in st.session_state: st.session_state.is_analyzed = False
 
-# 強制尋找可用模型（徹底解決 404 問題）
-@st.cache_resource
-def init_model():
-    try:
-        # 取得目前 API 金鑰下所有可用的模型清單
-        available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        
-        # 優先順序：1.5 Flash > 1.0 Pro
-        target_models = ['models/gemini-1.5-flash', 'models/gemini-pro', 'models/gemini-1.0-pro']
-        
-        for target in target_models:
-            if target in available_models:
-                return genai.GenerativeModel(model_name=target)
-        
-        # 如果都沒有，就用清單中第一個可用的
-        return genai.GenerativeModel(model_name=available_models[0])
-    except Exception as e:
-        # 最後的保險手段
-        return genai.GenerativeModel(model_name='gemini-1.5-flash')
-
-# --- 2. 強化 AI 解析邏輯 ---
-def run_ai_analysis():
+# --- 2. 混合偵測邏輯 ---
+def run_hybrid_analysis():
     text = st.session_state.u_input
     if not text: return
     
-    model = init_model()
+    st.session_state.current_text = text
+    st.session_state.is_analyzed = True
     
-    prompt = f"""
-    你是專業的台灣編輯。請分析以下文字中的中國用語，並區分為兩類回傳 JSON 格式：
-    1. 'fix': 確定要替換的詞（如：視頻->影片）。
-    2. 'options': 語意分歧、在台灣有不同意思的詞（如：土豆、窩心）。
-    
-    注意：僅輸出 JSON 內容，不要有 markdown 標籤。
-    格式：
-    {{
-      "fix": [ {{"old": "中國用語", "new": "台灣用語"}} ],
-      "options": [ {{"old": "歧義詞", "choices": ["選項1", "選項2"], "desc": "解釋" }} ]
-    }}
-    
-    文字：{text}
-    """
-    
+    # 初始化 AI 結果
+    st.session_state.ai_fix = []
+    st.session_state.ai_options = []
+
+    # 嘗試呼叫 AI
     try:
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        prompt = f"分析中國用語並回傳 JSON (fix: 直接換, options: 歧義)。文字：{text}"
         response = model.generate_content(prompt)
-        res_text = response.text
-        
-        # 精準過濾 JSON 內容
-        json_match = re.search(r'\{.*\}', res_text, re.DOTALL)
+        json_match = re.search(r'\{.*\}', response.text, re.DOTALL)
         if json_match:
-            st.session_state.analysis_results = json.loads(json_match.group(0))
-            st.session_state.current_text = text
-            st.session_state.is_analyzed = True
-        else:
-            st.error("AI 回傳格式有誤，請再試一次。")
-            
+            data = json.loads(json_match.group(0))
+            st.session_state.ai_fix = data.get('fix', [])
+            st.session_state.ai_options = data.get('options', [])
     except Exception as e:
-        st.error(f"目前與 Google AI 連線失敗。錯誤代碼：{str(e)}")
+        if "429" in str(e):
+            st.warning("⚠️ AI 每日額度已滿，目前使用「本地詞庫」為您服務。")
+        else:
+            st.error("AI 暫時無法連線。")
 
 def apply_change(old, new):
     st.session_state.current_text = st.session_state.current_text.replace(old, new)
-    st.toast(f"✅ 已替換：{new}")
+    st.toast(f"✅ 已更新：{new}")
 
 # --- 3. UI 介面 ---
-st.title("📱 語感守護者：中國用語全自動辨析")
+st.title("📱 語感守護者：穩定版")
 
 c1, c2 = st.columns([1, 1.2])
 
 with c1:
     st.subheader("📝 文字輸入")
-    st.text_area("試試貼上包含「土豆」或「視頻」的文字：", height=150, value="這視頻質量特好，我想吃點土豆。", key="u_input")
-    st.button("🚀 執行深度偵測", on_click=run_ai_analysis, use_container_width=True)
+    st.text_area("在此輸入內容：", height=150, value="這視頻質量特好，我想吃點土豆。", key="u_input")
+    st.button("🚀 執行偵測", on_click=run_hybrid_analysis, use_container_width=True)
     
     if st.session_state.is_analyzed:
-        st.markdown("### 📝 修正後的最終文字")
         st.code(st.session_state.current_text, language=None)
 
 with c2:
     st.subheader("🤳 App 互動預覽")
-    
     with st.container(border=True):
         if st.session_state.is_analyzed:
-            res = st.session_state.analysis_results
             with st.chat_message("assistant", avatar="🇹🇼"):
-                st.write("🔍 **中國用語偵測報告：**")
+                st.write("🔍 **建議修正：**")
                 
-                # A. 處理歧義詞 (二選一)
-                if 'options' in res and res['options']:
-                    st.warning("⚠️ 發現多義詞：")
-                    for item in res['options']:
-                        old = item['old']
-                        if old in st.session_state.current_text:
-                            st.write(f"**「{old}」**：{item.get('desc', '')}")
-                            choices = item['choices']
-                            cols = st.columns(len(choices))
-                            for i, choice in enumerate(choices):
-                                with cols[i]:
-                                    st.button(f"{choice}", key=f"opt_{old}_{i}", on_click=apply_change, args=(old, choice), use_container_width=True)
+                curr_text = st.session_state.current_text
                 
-                # B. 處理直接修正
-                if 'fix' in res and res['fix']:
-                    st.caption("📘 建議直接修正")
-                    for item in res['fix']:
-                        old, new = item['old'], item['new']
-                        if old in st.session_state.current_text:
-                            st.button(f"將「{old}」換成「{new}」", key=f"fix_{old}", on_click=apply_change, args=(old, new), use_container_width=True)
-                
-                if not res.get('fix') and not res.get('options'):
-                    st.success("🎉 文字檢查通過！")
+                # A. 先跑本地歧義偵測 (例如：土豆)
+                for old, info in LOCAL_AMBIGUOUS.items():
+                    if old in curr_text:
+                        st.warning(f"⚠️ 多義詞「{old}」")
+                        cols = st.columns(len(info['choices']))
+                        for i, choice in enumerate(info['choices']):
+                            with cols[i]:
+                                st.button(f"{choice}", key=f"loc_opt_{i}", on_click=apply_change, args=(old, choice), use_container_width=True)
+
+                # B. 再跑本地固定詞庫 (例如：視頻)
+                for old, new in LOCAL_DICT.items():
+                    if old in curr_text:
+                        st.button(f"📘 將「{old}」換成「{new}」", key=f"loc_fix_{old}", on_click=apply_change, args=(old, new), use_container_width=True)
+
         else:
             st.info("👋 請輸入文字後點擊偵測。")
 
