@@ -2,99 +2,114 @@ import streamlit as st
 import google.generativeai as genai
 import json
 import re
+import os
 
-# --- 1. 初始化設定 ---
-st.set_page_config(page_title="語感專家", page_icon="📱", layout="wide")
+# --- 1. 配置與初始化 ---
+st.set_page_config(page_title="語感專家：智慧進化版", page_icon="🧠", layout="wide")
 
 if "GOOGLE_API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
 
-# --- 2. 核心 AI 邏輯：強制 AI 進行全句語感分析 ---
-def start_deep_analysis(text):
+DB_FILE = "knowledge_base.json"
+
+# --- 2. 資料庫操作函數 (永久儲存) ---
+def load_db():
+    if os.path.exists(DB_FILE):
+        with open(DB_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {}
+
+def save_to_db(new_cards):
+    db = load_db()
+    for card in new_cards:
+        # 以原詞作為 Key，若資料庫沒有才存入，或更新舊資料
+        db[card['original']] = card
+    with open(DB_FILE, "w", encoding="utf-8") as f:
+        json.dump(db, f, ensure_ascii=False, indent=2)
+
+# --- 3. 智慧辨識引擎 (聯網搜尋 + 知識整合) ---
+def start_smart_analysis(text):
     if not text.strip(): return []
     
-    # 使用 1.5-flash 確保速度與辨識度
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    # 載入現有資料庫作為背景知識
+    local_db = load_db()
+    known_terms = list(local_db.keys())
     
-    # 這裡的 Prompt 強化了對「內卷」、「躺平」等新詞的自動抓取
+    model = genai.GenerativeModel(
+        model_name='gemini-1.5-flash',
+        tools=[{"google_search_retrieval": {}}] 
+    )
+    
     prompt = f"""
-    任務：你是最嚴格的台灣語境校正員。請找出這段文字中「任何」不符合台灣在地習慣的詞彙（包含流行語、語法、職場用語）。
+    任務：你是兩岸用語校正專家。
     待分析文字："{text}"
+    目前已知的本地詞庫：{known_terms}
     
-    【辨識重點】：
-    - 職場新詞：內卷 (建議:過度競爭)、躺平、畫餅、賦能。
-    - 語法不自然：有被驚訝到、給到。
-    - 網路流行：媽生好皮、種草、氛圍感、特好。
+    要求：
+    1. 分析文字中不符合台灣語感的詞。
+    2. 如果遇到詞庫中沒有的新詞（如：內卷、內耗），請務必使用 Google 搜尋確認台灣最在地的說法。
+    3. 台灣不說「好皮」，必須改為「好皮膚」。
     
-    請直接生成百科內容，並僅回傳 JSON 格式列表：
+    請回傳 JSON 列表：
     [
-      {{
-        "original": "抓到的原詞",
-        "replacement": "台灣在地建議說法",
-        "title": "百科標題 (例如: 內卷 vs 過度競爭)",
-        "explanation": "說明這個詞在大陸的意思，以及為什麼在台灣不常用。",
-        "suggestion": "具體的修正操作建議"
-      }}
+      {{"original": "原詞", "replacement": "台灣建議", "title": "百科標題", "explanation": "解釋", "suggestion": "建議"}}
     ]
     """
     try:
         response = model.generate_content(prompt)
-        # 提取 JSON 區塊，避免 AI 回傳額外文字導致出錯
         json_match = re.search(r'\[.*\]', response.text, re.DOTALL)
         if json_match:
-            return json.loads(json_match.group(0))
+            new_cards = json.loads(json_match.group(0))
+            # 【關鍵點】查完後自動存入資料庫，實現永久記住
+            save_to_db(new_cards)
+            return new_cards
         return []
-    except Exception as e:
-        # 若 AI 出錯（如截圖 3 的 404），回傳自定義錯誤提示
-        st.error(f"⚠️ AI 服務目前無法連線，請檢查 API Key 或稍後再試。")
+    except:
         return []
-
-# --- 3. 介面與狀態管理 ---
-if 'processed_text' not in st.session_state: st.session_state.processed_text = ""
-if 'results' not in st.session_state: st.session_state.results = []
-if 'analyzed' not in st.session_state: st.session_state.analyzed = False
-
-def apply_fix(old, new):
-    st.session_state.processed_text = st.session_state.processed_text.replace(old, new)
-    st.toast(f"✅ 已修正為：{new}")
 
 # --- 4. UI 介面 ---
-st.title("📱 語感專家：終極全自動辨識")
-st.caption("結合 AI 即時分析，自動抓取如「內卷」、「媽生」等所有非在地詞彙。")
+st.title("🧠 語感專家：具備永久記憶的 AI")
+st.caption("AI 查到的新詞會自動存入本地資料庫，下次辨識將直接調用。")
 
-col_in, col_wiki = st.columns([1, 1.2])
+col_left, col_right = st.columns([1, 1.2])
 
-with col_in:
+# 初始化狀態
+if 'processed_text' not in st.session_state: st.session_state.processed_text = ""
+if 'is_analyzed' not in st.session_state: st.session_state.is_analyzed = False
+
+with col_left:
     st.subheader("📝 文字輸入")
-    u_input = st.text_area("請輸入您想檢查的內容：", height=250, value="現在職場太內卷，大家都想躺平，這視頻真的很火。")
+    u_input = st.text_area("輸入任何文字：", height=200, value="職場內卷太嚴重，這視頻很火。")
     
-    if st.button("🚀 啟動深度智慧掃描", use_container_width=True):
+    if st.button("🚀 啟動進化辨識", use_container_width=True):
         st.session_state.processed_text = u_input
-        with st.spinner("AI 正全力辨識所有不道地用語..."):
-            st.session_state.results = start_deep_analysis(u_input)
-            st.session_state.analyzed = True
+        with st.spinner("AI 正在搜尋並更新知識庫..."):
+            start_smart_analysis(u_input) # 執行並儲存
+            st.session_state.is_analyzed = True
 
-    if st.session_state.analyzed:
-        st.markdown("### 📋 修正後結果預覽")
+    if st.session_state.is_analyzed:
         st.code(st.session_state.processed_text, language=None)
-
-with col_right := col_wiki:
-    st.subheader("🤳 台灣語境百科對照")
-    if st.session_state.analyzed:
-        # 過濾目前文字中還存在的詞
-        active_items = [r for r in st.session_state.results if r['original'] in st.session_state.processed_text]
         
-        if not active_items:
-            st.success("🎉 完美！這段文字目前讀起來非常道地。")
-        else:
-            for item in active_items:
-                with st.expander(f"✨ 自動偵測：{item['original']}", expanded=True):
-                    st.markdown(f"### {item['title']}")
-                    st.write(f"🔍 **語境百科：** {item['explanation']}")
-                    st.info(f"💡 **建議：** {item['suggestion']}")
-                    
-                    if st.button(f"👉 修正為「{item['replacement']}」", key=f"fix_{item['original']}", use_container_width=True):
-                        apply_fix(item['original'], item['replacement'])
+    # 顯示目前資料庫統計
+    db_size = len(load_db())
+    st.write(f"📊 目前資料庫已永久記住 `{db_size}` 個用語差異。")
+
+with col_right:
+    st.subheader("🤳 智慧百科 (含永久記憶)")
+    if st.session_state.is_analyzed:
+        db = load_db()
+        current_text = st.session_state.processed_text
+        
+        # 從資料庫中抓取文字中存在的詞
+        found = False
+        for word, card in db.items():
+            if word in current_text:
+                found = True
+                with st.expander(f"📌 記憶百科：{word}", expanded=True):
+                    st.markdown(f"### {card['title']}")
+                    st.write(card['explanation'])
+                    if st.button(f"👉 修正為「{card['replacement']}」", key=f"fix_{word}"):
+                        st.session_state.processed_text = current_text.replace(word, card['replacement'])
                         st.rerun()
-    else:
-        st.info("👋 請在左側輸入文字後啟動掃描。")
+        if not found:
+            st.success("🎉 目前文字查無非在地用語！")
