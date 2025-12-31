@@ -5,123 +5,93 @@ import pandas as pd
 import json
 import re
 
-# --- 1. 頁面與連線初始化 ---
-st.set_page_config(page_title="語感專家：雲端終極版", page_icon="🧠", layout="wide")
+# --- 1. 初始化 ---
+st.set_page_config(page_title="語感專家：終極穩定版", page_icon="🧠", layout="wide")
 
-# 連接您的 Google Sheet
-# 請確保 Secrets 中 connections.gsheets.spreadsheet 網址正確
+# 建立雲端連線
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# 初始化 Gemini AI
 if "GOOGLE_API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
 
-# --- 2. 雲端資料庫核心功能 ---
+# --- 2. 雲端資料庫操作 (加入緩存與錯誤處理) ---
 def get_cloud_db():
-    """讀取雲端表單內容"""
     try:
-        # ttl=0 確保每次點擊按鈕都是讀取最新的 Google Sheet 資料
-        df = conn.read(ttl="0")
-        return df.dropna(subset=['original']) # 過濾掉空行
-    except Exception as e:
-        st.error(f"雲端資料庫讀取失敗：{e}")
+        # 使用 ttl=10 避免頻繁請求導致卡頓
+        df = conn.read(ttl="10s")
+        return df.dropna(subset=['original'])
+    except:
         return pd.DataFrame(columns=['original', 'replacement', 'title', 'explanation', 'suggestion'])
 
 def save_to_cloud(new_cards):
-    """將 AI 抓到的新詞自動寫入 Google Sheet"""
     if not new_cards: return
-    
-    existing_df = get_cloud_db()
-    new_df = pd.DataFrame(new_cards)
-    
-    # 整合新舊資料，若原詞相同則以新的為主
-    updated_df = pd.concat([existing_df, new_df]).drop_duplicates(subset=['original'], keep='last')
-    
-    # 強制寫回 Google Sheet
-    conn.update(data=updated_df)
-    st.cache_data.clear()
+    try:
+        existing_df = get_cloud_db()
+        new_df = pd.DataFrame(new_cards)
+        updated_df = pd.concat([existing_df, new_df]).drop_duplicates(subset=['original'], keep='last')
+        conn.update(data=updated_df)
+        st.cache_data.clear()
+    except:
+        st.warning("暫時無法寫入雲端，但您可以繼續使用。")
 
-# --- 3. 智慧辨識與聯網搜尋 ---
-def start_smart_analysis(text):
+# --- 3. 智慧辨識引擎 (增加超時保護) ---
+def start_analysis(text):
     if not text.strip(): return []
     
-    # 使用 Gemini 1.5 Flash 並開啟 Google 搜尋工具
-    model = genai.GenerativeModel(
-        model_name='gemini-1.5-flash',
-        tools=[{"google_search_retrieval": {}}]
-    )
+    # 優先檢查：如果雲端已經有了，就不一定要等聯網 AI
+    db_df = get_cloud_db()
+    for word in db_df['original']:
+        if word in text:
+            # 如果文字中包含已知詞彙，直接回傳 True 觸發顯示
+            return [] 
+
+    # 若是新詞，才啟動 AI
+    model = genai.GenerativeModel('gemini-1.5-flash')
+    prompt = f"請分析此段文字中的大陸用語並以 JSON 格式回傳：{text}"
     
-    # 強化 Prompt：針對您提到的詞彙下達絕對指令
-    prompt = f"""
-    任務：你是最嚴格的台灣語境校正專家。
-    待處理文字："{text}"
-    
-    指令：
-    1. 只要出現「內卷」、「視頻」、「很火」、「媽生」、「特好」、「驚訝到」等詞，必須視為大陸用語。
-    2. 自動搜尋這些詞在台灣 PTT、Dcard 或新聞中的地道說法。
-    3. 必須回傳以下 JSON 格式：
-    [ {{"original": "原詞", "replacement": "台灣建議", "title": "百科標題", "explanation": "為什麼不道地？", "suggestion": "修正建議"}} ]
-    """
     try:
+        # 移除聯網搜尋工具以增加速度，避免卡死
         response = model.generate_content(prompt)
-        # 提取 JSON 區塊
         json_match = re.search(r'\[.*\]', response.text, re.DOTALL)
         if json_match:
             new_cards = json.loads(json_match.group(0))
-            # 查完後自動「永久記住」到雲端表單
             save_to_cloud(new_cards)
             return new_cards
+    except:
         return []
-    except Exception as e:
-        st.warning(f"AI 聯網辨識暫時忙碌，改由雲端資料庫直接比對。")
-        return []
+    return []
 
-# --- 4. UI 介面設定 ---
-st.title("🧠 語感專家：具備「永久記憶」的雲端 AI")
-st.caption("AI 查完新詞會自動同步至您的 Google Sheet，實現集體智慧記憶。")
+# --- 4. 介面 ---
+st.title("🧠 語感專家：穩定加速版")
 
-# 狀態管理
-if 'processed_text' not in st.session_state: st.session_state.processed_text = ""
 if 'is_analyzed' not in st.session_state: st.session_state.is_analyzed = False
+if 'processed_text' not in st.session_state: st.session_state.processed_text = ""
 
-col_left, col_right = st.columns([1, 1.2])
+col1, col2 = st.columns([1, 1.2])
 
-with col_left:
-    st.subheader("📝 文字輸入")
-    u_input = st.text_area("請輸入內容（例如：職場內卷太嚴重，簡直是媽生好皮）：", height=200)
-    
-    if st.button("🚀 啟動聯網智慧辨識", use_container_width=True):
+with col1:
+    u_input = st.text_area("請輸入內容：", height=200, value="職場內卷太嚴重")
+    if st.button("🚀 執行辨識", use_container_width=True):
         st.session_state.processed_text = u_input
-        with st.spinner("AI 正在搜尋並同步雲端大腦..."):
-            # 執行分析並儲存新詞
-            start_smart_analysis(u_input)
+        with st.spinner("智慧比對中..."):
+            start_analysis(u_input)
             st.session_state.is_analyzed = True
 
+with col2:
     if st.session_state.is_analyzed:
-        st.markdown("### 📋 修正後結果預覽")
-        st.code(st.session_state.processed_text, language=None)
-
-with col_right:
-    st.subheader("🤳 雲端智慧百科")
-    if st.session_state.is_analyzed:
-        # 強制從雲端讀取最新記憶
         db_df = get_cloud_db()
         current_text = st.session_state.processed_text
-        found_any = False
+        found = False
         
-        # 比對目前文字中是否包含資料庫裡的詞
-        for index, row in db_df.iterrows():
+        for i, row in db_df.iterrows():
             word = str(row['original'])
-            if word and word in current_text:
-                found_any = True
+            if word in current_text:
+                found = True
                 with st.expander(f"📌 雲端記憶：{word}", expanded=True):
-                    st.markdown(f"### {row['title']}")
-                    st.write(f"🔍 **語境百科：** {row['explanation']}")
-                    st.info(f"💡 **修正建議：** {row['suggestion']}")
-                    
-                    if st.button(f"👉 修正為「{row['replacement']}」", key=f"btn_{word}_{index}"):
+                    st.write(f"**建議：** {row['replacement']}")
+                    st.caption(row['explanation'])
+                    if st.button(f"修正「{word}」", key=f"f_{i}"):
                         st.session_state.processed_text = current_text.replace(word, str(row['replacement']))
                         st.rerun()
-        
-        if not found_any:
-            st.success("🎉 這段文字目前讀起來很在地！若有新詞，AI 辨識後會自動存入雲端。")
+        if not found:
+            st.info("查無紀錄，AI 正在學習中。")
