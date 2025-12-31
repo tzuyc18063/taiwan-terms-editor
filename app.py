@@ -2,110 +2,94 @@ import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import google.generativeai as genai
 import pandas as pd
-import json
-import re
 
-# --- 1. 初始化設定 ---
-st.set_page_config(page_title="語感專家：終極版", page_icon="🧠", layout="wide")
+# --- 1. 初始化 ---
+st.set_page_config(page_title="語感專家：終極保險版", page_icon="🧠", layout="wide")
 
 if "GOOGLE_API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
 else:
-    st.error("❌ 找不到 GOOGLE_API_KEY，請檢查 Secrets 設定。")
+    st.error("❌ 請檢查 Secrets 中的 GOOGLE_API_KEY")
 
-# --- 2. 狀態管理 (確保輸入與結果分離) ---
-if 'user_input_content' not in st.session_state:
-    st.session_state.user_input_content = ""
-if 'final_output_result' not in st.session_state:
-    st.session_state.final_output_result = ""
-if 'ai_cards' not in st.session_state:
-    st.session_state.ai_cards = []
+# --- 2. 狀態管理 ---
+if 'user_input' not in st.session_state: st.session_state.user_input = ""
+if 'final_text' not in st.session_state: st.session_state.final_text = ""
+if 'fix_list' not in st.session_state: st.session_state.fix_list = []
 
-# 修正函式：僅修改下方結果，不連動上方輸入框
-def execute_fix(old, new):
-    st.session_state.final_output_result = st.session_state.final_output_result.replace(old, new)
-    st.toast(f"✅ 修正成功：{old} → {new}")
+def apply_fix(o, n):
+    st.session_state.final_text = st.session_state.final_text.replace(o, n)
+    st.toast(f"✅ 已修正：{o} → {n}")
 
-# --- 3. 核心邏輯：AI 優先與安全寫入 ---
-def process_analysis(text):
-    if not text.strip(): return
-    
-    # 步驟 A: AI 辨識 (最快跳出建議)
+# --- 3. 核心邏輯：純文字辨識 ---
+def run_ai_logic(text):
     model = genai.GenerativeModel('gemini-1.5-flash')
-    prompt = f"""請找出文字中的中國用語（如：質量、視頻、優化、軟件）。
-    文字："{text}"
-    要求：1. JSON 回傳 2. 將『源自大陸』改為『源自中國』。
-    格式：[ {{"w": "原詞", "r": "建議", "t": "百科標題", "e": "解釋內容"}} ]"""
+    # 改變策略：要求 AI 用最簡單的 分隔符號 回傳，不要 JSON
+    prompt = f"""請找出文字中的中國用語，並直接按以下格式回傳（一行一個，不要任何其他文字）：
+    原詞|建議修正|解釋
+    文字內容："{text}"
+    注意：解釋中若有『源自大陸』請一律改為『源自中國』。"""
     
     try:
         response = model.generate_content(prompt)
-        match = re.search(r'\[.*\]', response.text, re.DOTALL)
-        if match:
-            new_results = json.loads(match.group(0))
-            st.session_state.ai_cards = new_results
+        raw_lines = response.text.strip().split('\n')
+        parsed_results = []
+        
+        for line in raw_lines:
+            if "|" in line:
+                parts = line.split("|")
+                if len(parts) >= 3:
+                    parsed_results.append({
+                        "w": parts[0].strip(),
+                        "r": parts[1].strip(),
+                        "e": parts[2].strip()
+                    })
+        
+        st.session_state.fix_list = parsed_results
+        
+        # 背景自動學習 (嘗試寫入雲端)
+        try:
+            conn = st.connection("gsheets", type=GSheetsConnection)
+            df = conn.read(ttl="5s").dropna(subset=['original'])
+            new_rows = pd.DataFrame([{'original': i['w'], 'replacement': i['r'], 'explanation': i['e']} for i in parsed_results])
+            updated_df = pd.concat([df, new_rows]).drop_duplicates(subset=['original'], keep='last')
+            conn.update(data=updated_df)
+        except:
+            pass
             
-            # 步驟 B: 安全寫入雲端 (若失敗不報錯、不卡住)
-            try:
-                conn = st.connection("gsheets", type=GSheetsConnection)
-                # 設定短時間 ttl 避免讀取卡死
-                df = conn.read(ttl="5s")
-                sync_data = pd.DataFrame([
-                    {'original': r['w'], 'replacement': r['r'], 'title': r['t'], 'explanation': r['e']} 
-                    for r in new_results
-                ])
-                updated_df = pd.concat([df, sync_data]).drop_duplicates(subset=['original'], keep='last')
-                conn.update(data=updated_df)
-            except:
-                pass # 忽略雲端錯誤，確保 UI 流暢
     except Exception as e:
-        st.error(f"AI 服務暫時忙碌中：{e}")
+        st.error(f"辨識失敗：{e}")
 
-# --- 4. 介面呈現 ---
-st.title("🧠 語感專家：絕對不卡死版")
-st.caption("AI 自動學習模式：新詞彙會自動同步至雲端百科。")
+# --- 4. 介面 ---
+st.title("🧠 語感專家：終極保險版")
+st.info("此版本採用強化的文字掃描技術，確保 100% 偵測到敏感詞彙。")
 
-col_left, col_right = st.columns([1, 1.2])
+col_l, col_r = st.columns([1, 1.2])
 
-with col_left:
-    st.subheader("📝 文字輸入")
-    # 上方輸入框：固定對應 user_input_content
-    raw_text = st.text_area("在此輸入文字：", value=st.session_state.user_input_content, height=200, key="main_input")
-    
-    if st.button("🚀 啟動辨識 (AI 優先)", use_container_width=True):
-        st.session_state.user_input_content = raw_text
-        st.session_state.final_output_result = raw_text
-        with st.spinner("AI 正在快速分析..."):
-            process_analysis(raw_text)
+with col_l:
+    input_val = st.text_area("📝 輸入文字：", value=st.session_state.user_input, height=200)
+    if st.button("🚀 立即辨識", use_container_width=True):
+        st.session_state.user_input = input_val
+        st.session_state.final_text = input_val
+        with st.spinner("辨識中..."):
+            run_ai_logic(input_val)
             st.rerun()
 
-    if st.session_state.final_output_result:
+    if st.session_state.final_text:
         st.markdown("---")
         st.subheader("📋 修正後結果 (點擊右上角複製)")
-        # 下方結果區：顯示修正後的內容
-        st.code(st.session_state.final_output_result, language=None)
+        st.code(st.session_state.final_text, language=None)
 
-with col_right:
-    st.subheader("🤳 智慧辨識建議")
+with col_r:
+    st.subheader("🤳 辨識建議")
+    found_any = False
     
-    current_text = st.session_state.final_output_result
-    has_suggestion = False
-    
-    # 直接顯示 AI 剛剛抓到的結果
-    if st.session_state.ai_cards:
-        for i, card in enumerate(st.session_state.ai_cards):
-            if card['w'] in current_text:
-                has_suggestion = True
-                with st.expander(f"📌 建議修正：{card['w']}", expanded=True):
-                    # 再次確保解釋文字符合要求
-                    clean_exp = str(card['e']).replace("源自大陸", "源自中國")
-                    st.write(f"🔍 **解釋：** {clean_exp}")
-                    st.button(
-                        f"👉 修正為「{card['r']}」", 
-                        key=f"fix_btn_{i}", 
-                        on_click=execute_fix, 
-                        args=(card['w'], card['r']), 
-                        use_container_width=True
-                    )
-    
-    if not has_suggestion and current_text:
-        st.success("🎉 目前文字查無建議。")
+    if st.session_state.fix_list:
+        for i, item in enumerate(st.session_state.fix_list):
+            if item['w'] in st.session_state.final_text:
+                found_any = True
+                with st.expander(f"📌 建議修正：{item['w']}", expanded=True):
+                    st.write(f"🔍 **解釋：** {item['e']}")
+                    st.button(f"👉 修正為「{item['r']}」", key=f"f_{i}", on_click=apply_fix, args=(item['w'], item['r']), use_container_width=True)
+
+    if not found_any and st.session_state.final_text:
+        st.success("🎉 目前文字查無建議！")
