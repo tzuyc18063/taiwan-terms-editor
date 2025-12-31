@@ -100,4 +100,10 @@ with c2:
                     with st.expander(f"🤖 AI 百科：{word}", expanded=True):
                         st.markdown(f"### {item['title']}")
                         st.write(f"🇹🇼 **台灣慣用：** {item['tw_term']}")
-                        st.write(f"🔍 **語境差異：** {item['diff
+                        st.write(f"🔍 **語境差異：** {item['diff']}")
+                        st.info(f"💡 **建議：** {item['suggestion']}")
+                        if st.button(f"👉 將「{word}」修正為「{item['tw_term']}」", key=f"ai_{word}", use_container_width=True):
+                            apply_change(word, item['tw_term']); st.rerun()
+
+        if not found_any:
+            st.success("🎉 目前文字看起來非常本土！")
