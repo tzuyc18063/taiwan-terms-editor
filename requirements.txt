@@ -1,3 +1,4 @@
 streamlit
 google-generativeai
-jieba
+st-gsheets-connection
+pandas
