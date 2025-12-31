@@ -1,36 +1,59 @@
+import streamlit as st
+from streamlit_gsheets import GSheetsConnection
+import google.generativeai as genai
+import pandas as pd
+
+# 1. 基本設定
+st.set_page_config(page_title="語感專家：穩定版", layout="wide")
+
+if 'res_list' not in st.session_state: st.session_state.res_list = []
+if 'f_text' not in st.session_state: st.session_state.f_text = ""
+
+def do_fix(old, new):
+    st.session_state.f_text = st.session_state.f_text.replace(old, new)
+    st.toast(f"✅ 已修正：{old}")
+
+# 2. 核心邏輯
 def run_sync_analysis(text):
     if not text.strip(): return
     
-    # 1. 修正模型名稱與安全設定
+    # 嘗試多個可能的模型名稱以避開 404
+    model_names = ['gemini-1.5-flash-latest', 'gemini-1.5-flash', 'gemini-pro']
+    model = None
+    
+    for name in model_names:
+        try:
+            genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
+            model = genai.GenerativeModel(name)
+            # 測試測試是否可用
+            test_resp = model.generate_content("test", generation_config={"max_output_tokens": 1})
+            break 
+        except:
+            continue
+
+    if not model:
+        st.error("❌ 無法連線至 Gemini AI 模型，請檢查 API Key 權限。")
+        return
+
     try:
-        # 嘗試使用更穩定的模型路徑名稱
-        model = genai.GenerativeModel('gemini-1.5-flash-latest') 
-        
-        prompt = f'你是一個繁體中文語感專家。找出文字中的中國用語。文字："{text}"。格式：原詞|建議|解釋'
-        
+        prompt = f'找出文字中的中國用語。文字："{text}"。格式：原詞|建議|解釋'
         response = model.generate_content(prompt)
         
-        # 檢查回應是否有效
-        if not response.text:
-            st.error("AI 回傳內容為空")
-            return
-            
         ai_res = []
-        for line in response.text.strip().split('\n'):
-            if "|" in line:
-                p = line.split("|")
-                if len(p) >= 3:
-                    ai_res.append({"w": p[0].strip(), "r": p[1].strip(), "e": p[2].strip()})
+        if response.text:
+            for line in response.text.strip().split('\n'):
+                if "|" in line:
+                    p = line.split("|")
+                    if len(p) >= 3:
+                        ai_res.append({"w": p[0].strip(), "r": p[1].strip(), "e": p[2].strip()})
+        
         st.session_state.res_list = ai_res
         
-        # 2. 💥 強制同步區 💥
+        # 3. 雲端同步
         if ai_res:
-            st.info("🔄 AI 辨識成功，正在連線 Google Sheets...")
             try:
-                # 建立連線
                 conn = st.connection("gsheets", type=GSheetsConnection)
-                
-                # 指定工作表名稱為 Sheet1
+                # 讀取 Sheet1
                 df = conn.read(worksheet="Sheet1", ttl=0)
                 
                 new_data = pd.DataFrame([
@@ -38,25 +61,35 @@ def run_sync_analysis(text):
                     for i in ai_res
                 ])
                 
-                # 合併並去重
-                if df is not None and not df.empty:
-                    updated_df = pd.concat([df, new_data]).drop_duplicates(subset=['original'], keep='last')
-                else:
-                    updated_df = new_data
-                
-                # 執行寫入
+                updated_df = pd.concat([df, new_data]).drop_duplicates(subset=['original'], keep='last')
+                # 寫入 Sheet1
                 conn.update(worksheet="Sheet1", data=updated_df)
-                st.success("✅ 雲端同步成功！資料已寫入 Sheet1。")
-                
+                st.success("✅ 雲端同步成功！")
             except Exception as e:
-                st.error(f"❌ 雲端寫入動作失敗：{e}")
-                st.info("提示：請檢查 Secrets 中的 private_key 是否為單引號包覆的一整行字串。")
+                st.warning(f"⚠️ 辨識完成，但雲端同步失敗：{e}")
 
-    except Exception as ai_e:
-        # 如果最新版模型也失敗，嘗試降級模型名稱
-        st.warning(f"偵測到模型存取問題，正在嘗試備用方案...")
-        try:
-            model = genai.GenerativeModel('gemini-pro')
-            # ... (後續邏輯同上)
-        except:
-            st.error(f"AI 服務連線失敗：{ai_e}")
+    except Exception as e:
+        st.error(f"分析失敗：{e}")
+
+# 3. 介面
+st.title("🧠 語感專家：穩定版")
+u_in = st.text_area("📝 輸入文字：", height=150, value=st.session_state.f_text)
+
+if st.button("🚀 開始分析"):
+    st.session_state.f_text = u_in
+    with st.spinner("AI 思考中..."):
+        run_sync_analysis(u_in)
+    st.rerun()
+
+# 顯示結果
+if st.session_state.f_text:
+    st.subheader("📋 修正後結果")
+    st.code(st.session_state.f_text)
+
+for i, item in enumerate(st.session_state.res_list):
+    if item['w'] in st.session_state.f_text:
+        with st.expander(f"📌 偵測到：{item['w']}", expanded=True):
+            st.write(item['e'])
+            if st.button(f"修正為 {item['r']}", key=f"btn_{i}"):
+                do_fix(item['w'], item['r'])
+                st.rerun()
