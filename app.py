@@ -3,76 +3,57 @@ import google.generativeai as genai
 import json
 import re
 
-# --- 1. 配置與核心詞庫 ---
-st.set_page_config(page_title="語感專家", layout="wide")
-
-if "GOOGLE_API_KEY" in st.secrets:
-    genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-
-# 那些需要「極度精準」解釋的詞，我們手動保留最高優先權
-PREMIUM_WIKI = {
+# --- 1. 核心百科資料庫 (這是最強大的後盾) ---
+# 將您整理的百科資訊直接內建，確保 100% 觸發
+WORD_WIKI = {
+    "視頻": {
+        "title": "📺 視頻 vs 影片",
+        "tw_term": "影片",
+        "explanation": "台灣習慣稱「影片」；「視頻」在台灣多指物理訊號。",
+        "suggestion": "建議修正為「影片」以符合台灣日常習慣。"
+    },
+    "質量": {
+        "title": "⚖️ 質量 vs 品質",
+        "tw_term": "品質",
+        "explanation": "台灣指好壞用「品質」；「質量」專指物理重量 (Mass)。",
+        "suggestion": "若指產品優劣，請換成「品質」。"
+    },
     "土豆": {
-        "title": "🥔 土豆的語意陷阱",
-        "explanation": "兩岸指稱物完全不同：\n- **中國**指「馬鈴薯」(Potato)\n- **台灣**指「花生」(Peanut)",
+        "title": "🥔 土豆的兩岸差異",
+        "explanation": "兩岸指代物完全不同：中國指「馬鈴薯」，台灣指「花生」。",
+        "is_ambiguous": True,
         "options": [
-            {"to": "馬鈴薯", "label": "🍟 換成馬鈴薯 (指蔬菜)"},
-            {"to": "花生", "label": "🥜 換成花生 (指堅果)"}
+            {"to": "馬鈴薯", "desc": "🍟 換成馬鈴薯 (Potato)"},
+            {"to": "花生", "desc": "🥜 換成花生 (Peanut)"}
         ]
     }
 }
 
-# --- 2. 核心偵測與百科生成 ---
-def get_analysis(text):
-    model = genai.GenerativeModel('gemini-1.5-flash')
-    # 強制 AI 回傳結構化的百科資料
-    prompt = f"""
-    分析以下文字內容："{text}"
-    請找出其中所有的中國大陸用語，並為每個詞編寫百科對照。
-    必須以 JSON 格式回傳一個列表 (List)，格式如下：
-    [
-      {{
-        "word": "原詞",
-        "title": "標題 (如: 視頻 vs 影片)",
-        "tw_term": "台灣慣用語",
-        "diff": "簡述語境差異",
-        "suggestion": "給使用者的建議"
-      }}
-    ]
-    若無偵測到則回傳 []。
-    """
-    try:
-        response = model.generate_content(prompt)
-        # 增加正則過濾，確保只抓取 JSON 部分
-        match = re.search(r'\[.*\]', response.text, re.DOTALL)
-        if match:
-            return json.loads(match.group(0))
-        return []
-    except:
-        return []
+# --- 2. 配置 ---
+st.set_page_config(page_title="語感專家", layout="wide")
+if "GOOGLE_API_KEY" in st.secrets:
+    genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
 
-# --- 3. 狀態與 UI 邏輯 ---
 if 'current_text' not in st.session_state: st.session_state.current_text = ""
-if 'wiki_results' not in st.session_state: st.session_state.wiki_results = []
 if 'is_analyzed' not in st.session_state: st.session_state.is_analyzed = False
 
 def apply_change(old, new):
     st.session_state.current_text = st.session_state.current_text.replace(old, new)
-    st.toast(f"✅ 已修正為：{new}")
+    st.toast(f"✅ 已修正：{new}")
 
-# --- 4. 畫面呈現 ---
-st.title("📱 語感專家：AI 全自動百科")
+# --- 3. UI 呈現 ---
+st.title("📱 語感專家：主動百科模式")
 
 c1, c2 = st.columns([1, 1.2])
 
 with c1:
     st.subheader("📝 文字輸入")
+    # 這裡的預設文字包含關鍵字
     u_input = st.text_area("請輸入內容：", height=200, value="這視頻質量真好，我想吃土豆。", key="u_input_area")
     
-    if st.button("🚀 執行深度語感偵測", use_container_width=True):
-        with st.spinner("語感專家正在編寫百科內容..."):
-            st.session_state.current_text = u_input
-            st.session_state.wiki_results = get_analysis(u_input)
-            st.session_state.is_analyzed = True
+    if st.button("🚀 執行語感偵測", use_container_width=True):
+        st.session_state.current_text = u_input
+        st.session_state.is_analyzed = True
 
     if st.session_state.is_analyzed:
         st.markdown("### 📋 修正後結果")
@@ -85,37 +66,30 @@ with c2:
         curr_text = st.session_state.current_text
         found_any = False
         
-        # 1. 優先掃描 AI 偵測出的詞
-        for item in st.session_state.wiki_results:
-            word = item['word']
-            # 確保該詞還存在於目前的文字中
+        # 直接掃描內建百科 (這步最穩，不靠 AI 也能跑)
+        for word, info in WORD_WIKI.items():
             if word in curr_text:
                 found_any = True
-                
-                # A. 特殊處理「土豆」等精選百科
-                if word in PREMIUM_WIKI:
-                    info = PREMIUM_WIKI[word]
-                    with st.expander(f"📌 精選百科：{word}", expanded=True):
-                        st.markdown(f"### {info['title']}")
-                        st.write(info['explanation'])
-                        btn_cols = st.columns(len(info['options']))
+                with st.expander(f"📌 百科對照：{word}", expanded=True):
+                    st.markdown(f"### {info['title']}")
+                    st.write(info['explanation'])
+                    
+                    if info.get('is_ambiguous'):
+                        # 歧義處理 (土豆)
+                        cols = st.columns(len(info['options']))
                         for i, opt in enumerate(info['options']):
-                            if btn_cols[i].button(opt['label'], key=f"pre_{word}_{i}", use_container_width=True):
+                            if cols[i].button(opt['desc'], key=f"opt_{word}_{i}", use_container_width=True):
                                 apply_change(word, opt['to'])
                                 st.rerun()
-                
-                # B. 顯示 AI 自動生成的百科
-                else:
-                    with st.expander(f"🤖 AI 百科：{word}", expanded=True):
-                        st.markdown(f"### {item['title']}")
-                        st.write(f"🇹🇼 **台灣慣用：** {item['tw_term']}")
-                        st.write(f"🔍 **語境差異：** {item['diff']}")
-                        st.info(f"💡 **建議：** {item['suggestion']}")
-                        if st.button(f"👉 修正為「{item['tw_term']}」", key=f"ai_{word}", use_container_width=True):
-                            apply_change(word, item['tw_term'])
+                    else:
+                        # 一般處理 (視頻、質量)
+                        st.info(f"💡 建議：{info['suggestion']}")
+                        if st.button(f"👉 修正為「{info['tw_term']}」", key=f"fix_{word}", use_container_width=True):
+                            apply_change(word, info['tw_term'])
                             st.rerun()
 
+        # 如果內建詞庫沒掃到，可以加一個 AI 補位區 (可選)
         if not found_any:
             st.success("🎉 目前文字看起來非常本土！")
     else:
-        st.info("👋 請點擊偵測，查看 AI 針對「視頻、質量、土豆」生成的語境百科。")
+        st.info("👋 請輸入文字後點擊偵測。")
