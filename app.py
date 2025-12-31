@@ -13,18 +13,30 @@ else:
 
 genai.configure(api_key=API_KEY)
 
-# 初始化狀態
+# 狀態管理
 if 'current_text' not in st.session_state: st.session_state.current_text = ""
 if 'analysis_results' not in st.session_state: st.session_state.analysis_results = {}
 if 'is_analyzed' not in st.session_state: st.session_state.is_analyzed = False
 
-# --- 2. 強化 AI 解析邏輯 ---
+# --- 2. 自動尋找可用模型函數 ---
+def get_model():
+    # 自動尋找目前環境支援的模型名稱
+    try:
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                if 'gemini-1.5-flash' in m.name:
+                    return genai.GenerativeModel(m.name)
+        return genai.GenerativeModel('gemini-pro') # 備援
+    except:
+        return genai.GenerativeModel('gemini-1.5-flash')
+
+# --- 3. 強化 AI 解析邏輯 ---
 def run_ai_analysis():
     text = st.session_state.u_input
     if not text: return
     
-    # 鎖定最穩定的模型名稱
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    # 這裡呼叫自動尋找的模型
+    model = get_model()
     
     prompt = f"""
     你是專業的台灣編輯。請分析以下文字中的中國用語，並區分為兩類回傳 JSON 格式：
@@ -45,24 +57,23 @@ def run_ai_analysis():
         response = model.generate_content(prompt)
         res_text = response.text
         
-        # 關鍵修正：使用正則表達式精準抓取 JSON 區塊，防止 AI 輸出雜訊
+        # 抓取 JSON 區塊
         json_match = re.search(r'\{.*\}', res_text, re.DOTALL)
         if json_match:
-            clean_json = json_match.group(0)
-            st.session_state.analysis_results = json.loads(clean_json)
+            st.session_state.analysis_results = json.loads(json_match.group(0))
             st.session_state.current_text = text
             st.session_state.is_analyzed = True
         else:
-            st.error("AI 回傳格式不正確，請再試一次。")
+            st.error("AI 格式解析錯誤，請再點擊一次偵測。")
             
     except Exception as e:
-        st.error(f"連線不穩定或額度已滿，請稍後重試。 (Error: {str(e)})")
+        st.error(f"連線失敗，請檢查 API Key。錯誤詳細內容：{str(e)}")
 
 def apply_change(old, new):
     st.session_state.current_text = st.session_state.current_text.replace(old, new)
     st.toast(f"✅ 已更新：{new}")
 
-# --- 3. UI 介面 ---
+# --- 4. UI 介面 ---
 st.title("📱 語感守護者：AI 全自動辨析")
 
 c1, c2 = st.columns([1, 1.2])
@@ -99,7 +110,7 @@ with c2:
                 
                 # 固定修正處理
                 if 'fix' in res and res['fix']:
-                    st.caption("📘 建議直接修正")
+                    st.caption("📘 中國用語建議修正")
                     for item in res['fix']:
                         old, new = item['old'], item['new']
                         if old in st.session_state.current_text:
