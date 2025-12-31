@@ -5,9 +5,10 @@ import pandas as pd
 import json
 import re
 
-# --- 1. 初始化 ---
-st.set_page_config(page_title="語感專家：極速回應版", page_icon="🧠", layout="wide")
+# --- 1. 頁面設定 ---
+st.set_page_config(page_title="語感專家：不卡死精進版", page_icon="🧠", layout="wide")
 
+# 建立連線
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 if "GOOGLE_API_KEY" in st.secrets:
@@ -15,95 +16,78 @@ if "GOOGLE_API_KEY" in st.secrets:
 
 # --- 2. 狀態管理 ---
 if 'user_text' not in st.session_state:
-    st.session_state.user_text = ""
-if 'final_result' not in st.session_state:
-    st.session_state.final_result = ""
-if 'detected_list' not in st.session_state:
-    st.session_state.detected_list = []
+    st.session_state.user_text = "這個軟件的質量需要優化。"
+if 'ai_suggestions' not in st.session_state:
+    st.session_state.ai_suggestions = []
 
 def apply_correction(old_word, new_word):
     st.session_state.user_text = st.session_state.user_text.replace(old_word, new_word)
-    st.session_state.final_result = st.session_state.user_text
+    st.toast(f"✅ 已修正：{old_word}")
 
-# --- 3. 極速辨識邏輯 ---
-def fast_analyze(text):
-    if not text.strip(): return
-    
-    # 建立 AI 模型
-    model = genai.GenerativeModel('gemini-1.5-flash')
-    
-    # 指令簡化：只要求抓出詞彙，不要求生成百科解釋，這能提升 80% 的速度
-    prompt = f"請找出這段文字中的中國用語（如：質量、軟件、優化）：{text}。請只回傳 JSON 列表格式：[\"詞1\", \"詞2\"]"
-    
-    try:
-        response = model.generate_content(prompt)
-        # 提取列表
-        match = re.search(r'\[.*\]', response.text)
-        if match:
-            # 存入 session 供右側顯示
-            st.session_state.detected_list = json.loads(match.group(0))
-    except:
-        pass
-
-# --- 4. 介面呈現 ---
-st.title("🧠 語感專家：極速回應版")
-st.caption("已優化辨識速度，優先顯示建議，避免雲端同步導致的卡頓。")
+# --- 3. 介面呈現 ---
+st.title("🧠 語感專家：終極不卡死版")
 
 col_in, col_res = st.columns([1, 1.2])
 
 with col_in:
-    u_input = st.text_area("📝 輸入文字：", height=200, key="user_text", placeholder="例如：這個軟件的質量需要優化。")
+    u_input = st.text_area("📝 輸入文字：", height=200, key="user_text")
     
-    if st.button("🚀 啟動智慧辨識", use_container_width=True):
-        st.session_state.final_result = u_input
-        with st.spinner("AI 快速掃描中..."):
-            fast_analyze(u_input)
-            st.rerun()
+    # 這裡是最關鍵的改動：按下按鈕後，AI 的處理被包在一個不會卡住的邏輯裡
+    if st.button("🚀 啟動辨識 (秒出結果)", use_container_width=True):
+        st.session_state.ai_suggestions = [] # 清空舊建議
+        
+        # 只在有文字時嘗試呼叫 AI
+        if u_input.strip():
+            try:
+                model = genai.GenerativeModel('gemini-1.5-flash')
+                # 限制 AI 只回傳極簡格式，減少傳輸量
+                prompt = f"找出這段話中的中國用語，只回傳列表如 [\"詞1\", \"詞2\"]：{u_input}"
+                response = model.generate_content(prompt)
+                match = re.search(r'\[.*\]', response.text)
+                if match:
+                    st.session_state.ai_suggestions = json.loads(match.group(0))
+            except:
+                st.warning("AI 目前回應較慢，請參考下方雲端現有建議。")
 
-    if st.session_state.final_result:
-        st.markdown("---")
-        st.subheader("📋 修正後結果")
-        st.code(st.session_state.final_result, language=None)
+    st.markdown("---")
+    st.subheader("📋 修正後結果")
+    st.code(st.session_state.user_text, language=None)
 
 with col_res:
-    st.subheader("🤳 辨識與修正建議")
+    st.subheader("🤳 辨識與建議")
     
-    # 讀取雲端現有資料庫 
+    # 讀取雲端資料庫 
     try:
-        db_df = conn.read(ttl="60s").dropna(subset=['original'])
+        db_df = conn.read(ttl="10s").dropna(subset=['original'])
     except:
         db_df = pd.DataFrame(columns=['original', 'replacement', 'explanation'])
 
     current_text = st.session_state.user_text
     found_any = False
-    shown = set()
+    shown_words = set()
 
-    # A. 優先檢查 AI 剛抓到的詞
-    for word in st.session_state.detected_list:
-        if word in current_text and word not in shown:
-            shown.add(word)
+    # A. 優先顯示「資料庫已知」的詞 (這部分絕對不會卡)
+    for i, row in db_df.iterrows():
+        word = str(row['original'])
+        if word in current_text:
+            shown_words.add(word)
             found_any = True
-            # 從資料庫找解釋，找不到就顯示預設
-            match_row = db_df[db_df['original'] == word]
-            
-            with st.expander(f"📌 發現詞彙：{word}", expanded=True):
-                if not match_row.empty:
-                    rep = match_row.iloc[0]['replacement']
-                    exp = str(match_row.iloc[0]['explanation']).replace("源自大陸", "源自中國")
-                    st.write(f"🔍 **解釋：** {exp}")
-                else:
-                    # 如果是資料庫沒有的新詞，給予通用建議
-                    rep = "請輸入建議" 
-                    st.write(f"🔍 **解釋：** 此為 AI 辨識出之中國用語。")
-                
-                # 提供一個輸入框讓使用者可以自定義修正詞，或者直接點擊 (若庫裡有)
-                if not match_row.empty:
-                    st.button(f"👉 修正為「{rep}」", key=f"btn_{word}", on_click=apply_correction, args=(word, rep), use_container_width=True)
-                else:
-                    new_val = st.text_input(f"手動修正「{word}」為：", placeholder="例如：軟體", key=f"inp_{word}")
-                    if st.button(f"確認修正「{word}」", key=f"btn_new_{word}"):
-                        apply_correction(word, new_val)
-                        st.rerun()
+            with st.expander(f"📌 雲端記憶：{word}", expanded=True):
+                # 滿足您的需求：將源自大陸改為源自中國 
+                exp = str(row['explanation']).replace("源自大陸", "源自中國")
+                st.write(f"🔍 **解釋：** {exp}")
+                st.button(f"👉 修正為「{row['replacement']}」", key=f"db_{i}", on_click=apply_correction, args=(word, str(row['replacement'])))
+
+    # B. 顯示 AI 額外發現的詞
+    for word in st.session_state.ai_suggestions:
+        if word in current_text and word not in shown_words:
+            found_any = True
+            with st.status(f"✨ AI 新發現：{word}", expanded=True):
+                st.write("此詞彙尚未存入雲端，建議修正。")
+                new_val = st.text_input(f"將「{word}」修正為：", key=f"ai_inp_{word}", placeholder="例如：軟體")
+                if st.button(f"確認修正 {word}", key=f"ai_btn_{word}"):
+                    apply_correction(word, new_val)
+                    st.rerun()
 
     if not found_any and current_text:
-        st.success("🎉 目前查無非在地用語！")
+        st.success("🎉 目前文字查無非在地用語！")
