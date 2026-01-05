@@ -6,38 +6,19 @@ import re
 # --- 1. 頁面配置 ---
 st.set_page_config(page_title="語感守護者", page_icon="📱", layout="wide")
 
-# --- 2. 您最滿意的初始化邏輯 (確保 AI 權限完整) ---
+# --- 2. 核心初始化 ---
 def initialize_model():
     try:
         API_KEY = st.secrets["GEMINI_API_KEY"]
         genai.configure(api_key=API_KEY)
-        
-        # 動態尋找最適合的模型名稱
         available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        
-        preferred_names = [
-            'models/gemini-1.5-flash', 
-            'models/gemini-pro'
-        ]
-        
-        selected_model = None
-        for name in preferred_names:
-            if name in available_models:
-                selected_model = name
-                break
-        
-        if not selected_model:
-            selected_model = available_models[0]
-            
-        return genai.GenerativeModel(selected_model)
+        target = 'models/gemini-1.5-flash' if 'models/gemini-1.5-flash' in available_models else available_models[0]
+        return genai.GenerativeModel(target)
     except Exception as e:
         st.error(f"❌ 系統連結失敗：{str(e)}")
         return None
 
 model = initialize_model()
-
-if not model:
-    st.stop()
 
 # --- 3. 狀態管理 ---
 if 'current_text' not in st.session_state: st.session_state.current_text = ""
@@ -49,58 +30,60 @@ def apply_change(old, new):
     st.session_state.current_text = st.session_state.current_text.replace(old, target_new)
     st.toast(f"✅ 已更新：{old} ➔ {target_new}")
 
-# --- 4. 您最滿意的深度 AI 分析 (強化對比指令) ---
+# --- 4. 強化分析邏輯：禁用「大陸」稱呼、強調詞彙並非獨有 ---
 def ai_data_analyze(text):
-    # 此指令能觸發 AI 進行兩岸語意對比 (如：很火 vs 生氣)
     prompt = f"""
     你是一位精通兩岸語言差異的「台灣在地語感顧問」。
-    請深度分析以下文字，找出不符合台灣在地習慣的詞彙（如大陸用語、流行語、蛐蛐等）。
+    請深度分析以下文字中不符合台灣在地口語習慣的詞彙（包含中國用語、流行語、新興動詞等）。
     
     待分析文字："{text}"
     
-    【回傳規範】：
-    - 請嚴格以 JSON 陣列格式回傳。
-    - 理由 (reason) 必須包含「兩岸語意對比」，例如解釋某詞在台灣是否會造成誤解。
-    - 格式：
+    【重要指令】：
+    1. 稱呼規範：在解釋理由時，一律嚴格使用「中國」一詞，禁止使用「大陸」。
+    2. 語意精準度：若該詞彙並非中國獨有（台灣也有人使用），請在理由中明確說明「它並非中國獨有詞彙」，
+       但要解釋為何在台灣語境下建議調整（例如：台灣有更道地的說法、語意在台灣容易產生誤解、或是使用頻率的差異）。
+    3. 理由範例：「很火」在中國指受歡迎，但在台灣常指生氣；「噁心到我了」雖然在語法上可被理解，但台灣更常用「我覺得很噁心」。
+    
+    【回傳格式】：
+    請嚴格以 JSON 陣列格式回傳：
     [
       {{
         "original": "原詞彙",
         "taiwan": "台灣建議",
-        "reason": "深度語意對比說明",
+        "reason": "深度語意對比說明 (須遵守上述指令)",
         "example": "台灣在地範例"
       }}
     ]
     """
     try:
         response = model.generate_content(prompt)
-        # 精準抓取 JSON 區塊，避免雜訊導致空白
         match = re.search(r'\[.*\]', response.text, re.DOTALL)
         if match:
             return json.loads(match.group())
         return []
     except Exception as e:
-        st.error(f"⚠️ 分析過程中發生異常：{str(e)}")
+        st.error(f"⚠️ 分析異常：{str(e)}")
         return []
 
 # --- 5. 介面呈現 ---
 st.title("📱 語感守護者")
-st.markdown("#### 回歸 AI 深度模式：解析語意誤區與在地用法")
+st.markdown("#### 深度解析語意差異：精準辨析兩岸用法誤區")
 
 c1, c2 = st.columns([1, 1.2])
 
 with c1:
     u_input = st.text_area("請輸入文字：", height=250, 
-                           value=st.session_state.current_text if st.session_state.current_text else "這個套路真的很火，但他一直在背後蛐蛐我。", 
+                           value=st.session_state.current_text if st.session_state.current_text else "視頻質量很好，但他一直在背後蛐蛐我，這讓我很火。", 
                            key="u_input")
     
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("🚀 執行語感掃描", use_container_width=True):
-            with st.spinner("語感顧問正在深度分析中..."):
+        if st.button("🚀 執行深度分析", use_container_width=True):
+            with st.spinner("語感顧問分析中..."):
                 st.session_state.current_text = u_input
                 st.session_state.final_results = ai_data_analyze(u_input)
                 st.session_state.is_analyzed = True
-                st.rerun() # 確保畫面立即更新
+                st.rerun()
 
     with col2:
         if st.button("🧹 重置編輯器", use_container_width=True):
