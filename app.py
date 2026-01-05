@@ -1,74 +1,107 @@
 import streamlit as st
 import pandas as pd
 
-# 1. 核心語感轉換字典
-TAIWAN_TERMS = {
-    "視頻": "影片", "軟件": "軟體", "硬盤": "硬碟", "質量": "品質",
-    "優化": "最佳化", "支持": "支援", "菜單": "選單", "激活": "啟用",
-    "打印": "列印", "實時": "即時", "信號": "訊號", "信息": "訊息",
-    "屏幕": "螢幕", "內存": "記憶體", "鼠標": "滑鼠", "充電寶": "行動電源",
-    "網絡": "網路", "程序": "程式", "服務器": "伺服器", "硬體": "硬體"
+# 1. 核心詞典：包含解釋與用法差異 (這就是你說的重點)
+TERM_EXPLANATIONS = {
+    "視頻": {
+        "tw": "影片",
+        "diff": "大陸稱『視頻』源於頻率信號；台灣習慣稱『影片』，延續電影片、底片的說法。",
+        "example": "例：這個影片很有趣。"
+    },
+    "軟件": {
+        "tw": "軟體",
+        "diff": "台灣統一將 Software 譯為『軟體』，硬體則是 Hardware；大陸則使用『件』字。",
+        "example": "例：這套軟體很好用。"
+    },
+    "質量": {
+        "tw": "品質 / 質感",
+        "diff": "大陸『質量』兼具物理質量與 Quality 的意思；台灣在形容產品好壞時必用『品質』。",
+        "example": "例：這件衣服的品質很好。"
+    },
+    "優化": {
+        "tw": "最佳化",
+        "diff": "大陸泛指所有改善；台灣在電腦科學領域常用『最佳化』，生活語境則說『改善』或『提升』。",
+        "example": "例：程式碼需要最佳化。"
+    },
+    "信息": {
+        "tw": "訊息 / 資訊",
+        "diff": "大陸將 Message 和 Information 統稱為信息；台灣區分得很清楚，Message 是訊息，Data 是資訊。",
+        "example": "例：我收到一則訊息。"
+    }
 }
 
-# 頁面配置
-st.set_page_config(page_title="台灣語感轉換器", layout="wide")
+# 2. 頁面美化
+st.set_page_config(page_title="台灣語感翻譯專家", layout="wide")
 
-# 2. 修正後的 CSS (確保 unsafe_allow_html 為 True)
 st.markdown("""
     <style>
-    .stApp { background-color: #ffffff; }
-    .main { padding-top: 2rem; }
-    .stTextArea textarea { font-size: 1.1rem !important; border-radius: 8px !important; border: 1px solid #e0e0e0 !important; }
-    div.stButton > button { 
-        width: 100%; 
-        background-color: #007bff; 
-        color: white; 
-        border-radius: 5px; 
-        height: 3em;
-        font-weight: bold;
+    .stApp { background-color: #f8f9fa; }
+    .explanation-card {
+        background-color: #ffffff;
+        padding: 20px;
+        border-radius: 10px;
+        border-left: 5px solid #007bff;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        margin-bottom: 20px;
     }
-    div.stButton > button:hover { border: 1px solid #0056b3; background-color: #0056b3; color: white; }
+    .tw-term { color: #007bff; font-weight: bold; font-size: 1.2em; }
+    .diff-text { color: #555; font-size: 0.95em; line-height: 1.6; }
     </style>
 """, unsafe_allow_html=True)
 
-# 3. 側邊欄：顯示對照表
+# 3. 主介面
+st.title("🇹🇼 台灣語感專家：用語轉換與用法解釋")
+st.write("不只是翻譯，更告訴你兩岸用法的差異點。")
+
+# 4. 側邊欄：互動式詞典按鈕
 with st.sidebar:
-    st.title("⚙️ 術語管理")
-    st.write("目前採本地運作模式，不連接雲端資料庫。")
-    st.divider()
-    st.subheader("目前支援的轉換")
-    df = pd.DataFrame(list(TAIWAN_TERMS.items()), columns=['大陸用語', '台灣在地語感'])
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    st.header("📚 術語百科")
+    st.write("點擊下方術語查看差異說明：")
+    for cn in TERM_EXPLANATIONS.keys():
+        if st.button(f"🔍 {cn} vs {TERM_EXPLANATIONS[cn]['tw']}"):
+            st.session_state.selected_term = cn
 
-# 4. 主介面
-st.title("🇹🇼 台灣語感 (Taiwanese Style) 轉換器")
-st.write("將文字貼在左側，系統將自動套用台灣常用術語對照。")
-
+# 5. 文字轉換區
 col1, col2 = st.columns(2)
 
 with col1:
-    st.subheader("原始文字")
-    input_text = st.text_area("請在此輸入內容...", placeholder="例如：這個視頻的質量優化得不錯...", height=400)
+    st.subheader("輸入原始內容")
+    input_text = st.text_area("在此輸入...", placeholder="請輸入包含大陸用語的內容...", height=300)
 
 with col2:
     st.subheader("轉換結果")
-    
-    # 執行轉換邏輯
     output_text = input_text
+    found_terms = []
     if input_text:
-        for cn, tw in TAIWAN_TERMS.items():
-            output_text = output_text.replace(cn, tw)
+        for cn, info in TERM_EXPLANATIONS.items():
+            if cn in input_text:
+                output_text = output_text.replace(cn, f"**{info['tw']}**")
+                found_terms.append(cn)
     
-    st.text_area("自動轉換後：", value=output_text, height=400)
+    st.markdown(f'<div style="background:white; padding:15px; border-radius:8px; border:1px solid #ddd; min-height:300px;">{output_text}</div>', unsafe_allow_html=True)
 
-# 功能操作區
+# 6. 動態解釋區：根據點擊或偵測到的詞彙顯示
 st.divider()
-c1, c2, c3 = st.columns([1, 1, 1])
+st.subheader("💡 用法差異詳解")
 
-if c1.button("✨ 執行語感優化"):
-    st.toast("已完成語感轉換！")
+# 如果有點選側邊欄或偵測到文字中有關鍵字
+term_to_show = st.session_state.get('selected_term')
 
-if c2.button("🧹 清除全部內容"):
+if term_to_show:
+    info = TERM_EXPLANATIONS[term_to_show]
+    st.markdown(f"""
+    <div class="explanation-card">
+        <span style="font-size:1.5em;">🇨🇳 {term_to_show} ➔ <span class="tw-term">🇹🇼 {info['tw']}</span></span><br><br>
+        <p class="diff-text"><b>【差異解釋】</b><br>{info['diff']}</p>
+        <p style="color: green; font-style: italic;">{info['example']}</p>
+    </div>
+    """, unsafe_allow_html=True)
+elif not found_terms:
+    st.info("在上方輸入文字或點擊左側術語，這裡會顯示詳細的用法差異解釋。")
+else:
+    st.success(f"偵測到以下術語：{', '.join(found_terms)}。點擊左側側邊欄可查看詳細解釋。")
+
+# 功能鍵
+if st.button("🧹 清除畫面"):
+    st.session_state.selected_term = None
     st.rerun()
-
-st.caption("版本說明：這是一個完全在本地運行的編輯器，不涉及雲端存取，速度最快且最穩定。")
