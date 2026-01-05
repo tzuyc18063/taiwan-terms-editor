@@ -1,73 +1,111 @@
+from flask import Flask, render_template_string, request, jsonify
 import json
 import os
 
-class SimpleSystem:
-    def __init__(self, filename="data_storage.json"):
-        self.filename = filename
-        self.data = self._load_data()
+app = Flask(__name__)
+DATA_FILE = "data.json"
 
-    def _load_data(self):
-        """從本地讀取 JSON 檔案，如果不存在則回傳空列表"""
-        if os.path.exists(self.filename):
-            try:
-                with open(self.filename, 'r', encoding='utf-8') as f:
-                    return json.load(f)
-            except Exception:
-                return []
-        return []
+# 確保本地有資料檔
+def load_data():
+    if os.path.exists(DATA_FILE):
+        with open(DATA_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return []
 
-    def save_data(self):
-        """將目前數據儲存到本地檔案"""
-        with open(self.filename, 'w', encoding='utf-8') as f:
-            json.dump(self.data, f, ensure_ascii=False, indent=4)
+def save_data(data):
+    with open(DATA_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=4)
 
-    def add_item(self, name, category, value):
-        """新增一筆資料"""
-        new_entry = {
-            "id": len(self.data) + 1,
-            "name": name,
-            "category": category,
-            "value": value
+# --- 網頁 HTML 模板 (顯白、簡潔、不卡頓) ---
+HTML_TEMPLATE = """
+<!DOCTYPE html>
+<html>
+<head>
+    <title>快速本地管理系統</title>
+    <style>
+        body { font-family: sans-serif; margin: 40px; background-color: #f4f4f9; }
+        .container { max-width: 600px; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        input { padding: 8px; margin-right: 10px; border: 1px solid #ddd; border-radius: 4px; }
+        button { padding: 8px 15px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        button:hover { background: #218838; }
+        ul { list-style: none; padding: 0; margin-top: 20px; }
+        li { padding: 10px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; }
+        .delete-btn { background: #dc3545; padding: 3px 8px; font-size: 12px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>數據管理 (本地版)</h2>
+        <input type="text" id="itemInput" placeholder="輸入名稱...">
+        <button onclick="addItem()">新增</button>
+        <ul id="itemList"></ul>
+    </div>
+
+    <script>
+        // 初始化載入
+        async function loadItems() {
+            const res = await fetch('/api/data');
+            const data = await res.json();
+            const list = document.getElementById('itemList');
+            list.innerHTML = data.map(item => `
+                <li>
+                    ${item.name} 
+                    <button class="delete-btn" onclick="deleteItem(${item.id})">刪除</button>
+                </li>
+            `).join('');
         }
-        self.data.append(new_entry)
-        self.save_data()
-        print(f"✅ 已成功加入：{name}")
 
-    def list_items(self):
-        """顯示所有資料"""
-        if not self.data:
-            print("目前沒有任何記錄。")
-            return
-        
-        print("\n" + "="*30)
-        print(f"{'ID':<5} {'名稱':<10} {'類別':<10} {'數值':<5}")
-        print("-" * 30)
-        for item in self.data:
-            print(f"{item['id']:<5} {item['name']:<10} {item['category']:<10} {item['value']:<5}")
-        print("="*30 + "\n")
+        async function addItem() {
+            const input = document.getElementById('itemInput');
+            if (!input.value) return;
+            await fetch('/api/data', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ name: input.value })
+            });
+            input.value = '';
+            loadItems();
+        }
 
-    def delete_item(self, item_id):
-        """根據 ID 刪除資料"""
-        initial_len = len(self.data)
-        self.data = [item for item in self.data if item['id'] != item_id]
-        
-        if len(self.data) < initial_len:
-            self.save_data()
-            print(f"🗑️ 已刪除 ID: {item_id}")
-        else:
-            print(f"⚠️ 找不到 ID: {item_id}")
+        async function deleteItem(id) {
+            await fetch(`/api/data/${id}`, { method: 'DELETE' });
+            loadItems();
+        }
 
-# --- 互動測試區 ---
-if __name__ == "__main__":
-    system = SimpleSystem()
+        loadItems();
+    </script>
+</body>
+</html>
+"""
 
-    # 1. 範例新增
-    system.add_item("測試項目A", "辦公", 100)
-    system.add_item("測試項目B", "個人", 50)
+# --- 後端 API 路由 ---
 
-    # 2. 顯示清單
-    print("當前儲存的資料：")
-    system.list_items()
+@app.route('/')
+def index():
+    return render_template_string(HTML_TEMPLATE)
 
-    # 3. 測試刪除 (可選)
-    # system.delete_item(1)
+@app.route('/api/data', methods=['GET'])
+def get_data():
+    return jsonify(load_data())
+
+@app.route('/api/data', methods=['POST'])
+def add_data():
+    data = load_data()
+    new_item = {
+        "id": len(data) + 1,
+        "name": request.json.get("name")
+    }
+    data.append(new_item)
+    save_data(data)
+    return jsonify({"status": "success"})
+
+@app.route('/api/data/<int:item_id>', methods=['DELETE'])
+def delete_data(item_id):
+    data = load_data()
+    data = [i for i in data if i['id'] != item_id]
+    save_data(data)
+    return jsonify({"status": "success"})
+
+if __name__ == '__main__':
+    print("網頁伺服器已啟動：http://127.0.0.1:5000")
+    app.run(debug=True)
