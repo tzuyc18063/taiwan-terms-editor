@@ -16,7 +16,7 @@ except Exception:
 
 # --- 2. 在地語感資料庫 ---
 HARDCORE_RULES = {
-    "套路": {"tw": "花招 / 陷阱 / 慣用手段", "reason": "「套路」在台灣道地說法中，通常使用「花招」、「話術」或「手段」會更自然。"},
+    "套路": {"tw": "花招 / 陷阱 / 慣用手段", "reason": "「套路」在台灣道說法中，通常使用「花招」、「話術」或「手段」會更自然。"},
     "走心": {"tw": "用心 / 認真", "reason": "「走心」在台灣傳統語意中有時帶有「在意、鑽牛角尖」的含意，建議依語境調整。"},
     "視頻": {"tw": "影片", "reason": "台灣在地習慣稱為「影片」，調整後更符合台灣讀者的閱讀習慣。"},
     "很火": {"tw": "很紅 / 大受歡迎", "reason": "台灣習慣用「很紅」或「熱門」來形容受歡迎的程度。"},
@@ -32,7 +32,6 @@ if 'is_analyzed' not in st.session_state: st.session_state.is_analyzed = False
 if 'final_results' not in st.session_state: st.session_state.final_results = []
 
 def apply_change(old, new):
-    # 處理建議詞中有斜線的情況，預設取第一個建議
     target_new = new.split(' / ')[0]
     st.session_state.current_text = st.session_state.current_text.replace(old, target_new)
     st.toast(f"✅ 已更新：{old} ➔ {target_new}")
@@ -43,8 +42,8 @@ def apply_all_changes():
         new = item['taiwan'].split(' / ')[0]
         if old in st.session_state.current_text:
             st.session_state.current_text = st.session_state.current_text.replace(old, new)
-    st.toast("✅ 已套用所有語感建議")
-    st.session_state.final_results = [] # 清空建議列表
+    st.toast("✅ 已套用所有建議，文字已在地化")
+    st.session_state.final_results = []
 
 def heavy_analyze(text):
     results = []
@@ -95,28 +94,28 @@ with c1:
         st.write("---")
         st.subheader("📋 修正後的文字")
         st.code(st.session_state.current_text, language=None)
-        st.caption("💡 點擊右上方圖示即可快速複製文字。")
+        st.caption("💡 提示：點擊右上角即可複製文字。")
 
 with c2:
     st.subheader("💡 語感調整建議")
     if st.session_state.is_analyzed:
-        # 過濾掉已經不存在於文字中的建議（可能已被手動刪除或取代）
         active_results = [r for r in st.session_state.final_results if r['original'] in st.session_state.current_text]
         
         if not active_results:
             st.success("✨ 這段文字目前非常符合台灣在地的語感。")
         else:
-            # 「一鍵套用全部」按鈕放在最上方
-            if st.button("🪄 套用全部建議", use_container_width=True, type="primary"):
+            # 移除 type="primary"，改用溫和的預設顏色
+            if st.button("🪄 一鍵套用所有建議", use_container_width=True):
                 apply_all_changes()
                 st.rerun()
                 
-            st.warning(f"🔔 偵測到 {len(active_results)} 處建議調整的詞彙：")
+            st.warning(f"🔔 發現 {len(active_results)} 處建議調整的詞彙：")
             for item in active_results:
                 with st.expander(f"📌 在地建議：{item['original']} ➔ {item['taiwan']}", expanded=True):
                     st.write(f"📘 **調整建議：** {item['reason']}")
-                    if st.button(f"個別套用：{item['taiwan']}", key=f"btn_{item['original']}"):
+                    # 個別套用按鈕也維持溫和色調
+                    if st.button(f"套用此項：{item['taiwan']}", key=f"btn_{item['original']}"):
                         apply_change(item['original'], item['taiwan'])
                         st.rerun()
     else:
-        st.write("掃描後將在此顯示調整建議。")
+        st.write("掃描完成後，建議調整資訊會顯示於此。")
