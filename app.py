@@ -1,111 +1,74 @@
-from flask import Flask, render_template_string, request, jsonify
-import json
-import os
-
-app = Flask(__name__)
-DATA_FILE = "data.json"
-
-# 確保本地有資料檔
-def load_data():
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return []
-
-def save_data(data):
-    with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=4)
-
-# --- 網頁 HTML 模板 (顯白、簡潔、不卡頓) ---
-HTML_TEMPLATE = """
 <!DOCTYPE html>
-<html>
+<html lang="zh-TW">
 <head>
-    <title>快速本地管理系統</title>
+    <meta charset="UTF-8">
+    <title>本地數據管理系統</title>
     <style>
-        body { font-family: sans-serif; margin: 40px; background-color: #f4f4f9; }
-        .container { max-width: 600px; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
-        input { padding: 8px; margin-right: 10px; border: 1px solid #ddd; border-radius: 4px; }
-        button { padding: 8px 15px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; }
-        button:hover { background: #218838; }
-        ul { list-style: none; padding: 0; margin-top: 20px; }
-        li { padding: 10px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; }
-        .delete-btn { background: #dc3545; padding: 3px 8px; font-size: 12px; }
+        /* 恢復你喜歡的乾淨顯白風格 */
+        body { font-family: "Microsoft JhengHei", sans-serif; background-color: #ffffff; color: #333; margin: 0; padding: 50px; display: flex; justify-content: center; }
+        .card { width: 100%; max-width: 500px; border: 1px solid #eee; padding: 20px; border-radius: 12px; shadow: 0 4px 6px rgba(0,0,0,0.05); }
+        h2 { border-bottom: 2px solid #f0f0f0; padding-bottom: 10px; font-weight: 400; }
+        .input-group { margin: 20px 0; display: flex; gap: 10px; }
+        input { flex: 1; padding: 10px; border: 1px solid #ddd; border-radius: 6px; outline: none; }
+        button { padding: 10px 20px; cursor: pointer; border-radius: 6px; border: none; transition: 0.3s; }
+        .btn-add { background-color: #007bff; color: white; }
+        .btn-add:hover { background-color: #0056b3; }
+        ul { list-style: none; padding: 0; }
+        li { background: #f9f9f9; margin-bottom: 8px; padding: 12px; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; border-left: 4px solid #007bff; }
+        .btn-del { background-color: #ff4d4f; color: white; font-size: 12px; }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h2>數據管理 (本地版)</h2>
-        <input type="text" id="itemInput" placeholder="輸入名稱...">
-        <button onclick="addItem()">新增</button>
-        <ul id="itemList"></ul>
+
+<div class="card">
+    <h2>數據清單</h2>
+    
+    <div class="input-group">
+        <input type="text" id="itemInput" placeholder="請輸入內容...">
+        <button class="btn-add" onclick="addItem()">新增</button>
     </div>
 
-    <script>
-        // 初始化載入
-        async function loadItems() {
-            const res = await fetch('/api/data');
-            const data = await res.json();
-            const list = document.getElementById('itemList');
-            list.innerHTML = data.map(item => `
-                <li>
-                    ${item.name} 
-                    <button class="delete-btn" onclick="deleteItem(${item.id})">刪除</button>
-                </li>
-            `).join('');
-        }
+    <ul id="itemList"></ul>
+</div>
 
-        async function addItem() {
-            const input = document.getElementById('itemInput');
-            if (!input.value) return;
-            await fetch('/api/data', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ name: input.value })
-            });
-            input.value = '';
-            loadItems();
-        }
+<script>
+    // 核心邏輯：直接讀取瀏覽器內部的存儲空間
+    let storageKey = "my_local_data";
 
-        async function deleteItem(id) {
-            await fetch(`/api/data/${id}`, { method: 'DELETE' });
-            loadItems();
-        }
+    function loadData() {
+        const list = document.getElementById('itemList');
+        const data = JSON.parse(localStorage.getItem(storageKey) || "[]");
+        
+        list.innerHTML = data.map((item, index) => `
+            <li>
+                <span>${item}</span>
+                <button class="btn-del" onclick="deleteItem(${index})">刪除</button>
+            </li>
+        `).join('');
+    }
 
-        loadItems();
-    </script>
+    function addItem() {
+        const input = document.getElementById('itemInput');
+        if (!input.value.trim()) return;
+
+        const data = JSON.parse(localStorage.getItem(storageKey) || "[]");
+        data.push(input.value);
+        localStorage.setItem(storageKey, JSON.stringify(data));
+        
+        input.value = '';
+        loadData();
+    }
+
+    function deleteItem(index) {
+        const data = JSON.parse(localStorage.getItem(storageKey) || "[]");
+        data.splice(index, 1);
+        localStorage.setItem(storageKey, JSON.stringify(data));
+        loadData();
+    }
+
+    // 初始載入
+    loadData();
+</script>
+
 </body>
 </html>
-"""
-
-# --- 後端 API 路由 ---
-
-@app.route('/')
-def index():
-    return render_template_string(HTML_TEMPLATE)
-
-@app.route('/api/data', methods=['GET'])
-def get_data():
-    return jsonify(load_data())
-
-@app.route('/api/data', methods=['POST'])
-def add_data():
-    data = load_data()
-    new_item = {
-        "id": len(data) + 1,
-        "name": request.json.get("name")
-    }
-    data.append(new_item)
-    save_data(data)
-    return jsonify({"status": "success"})
-
-@app.route('/api/data/<int:item_id>', methods=['DELETE'])
-def delete_data(item_id):
-    data = load_data()
-    data = [i for i in data if i['id'] != item_id]
-    save_data(data)
-    return jsonify({"status": "success"})
-
-if __name__ == '__main__':
-    print("網頁伺服器已啟動：http://127.0.0.1:5000")
-    app.run(debug=True)
