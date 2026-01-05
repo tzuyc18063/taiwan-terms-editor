@@ -6,23 +6,17 @@ import re
 # --- 1. 頁面配置 ---
 st.set_page_config(page_title="語感守護者", page_icon="📱", layout="wide")
 
-# --- 2. 核心初始化 (自動適應模型版本，防止 404) ---
+# --- 2. 穩定初始化 ---
 def initialize_system():
     try:
         if "GEMINI_API_KEY" not in st.secrets:
             st.error("❌ 找不到 API 金鑰，請檢查 Streamlit Secrets 設定。")
             st.stop()
-            
         genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-        
-        # 動態抓取可用模型，確保不會因為名稱變動而 404
         available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        
         target = 'models/gemini-1.5-flash'
         if target not in available_models:
-            # 如果找不到 flash，就自動選清單中第一個可用的
             target = available_models[0]
-            
         return genai.GenerativeModel(target)
     except Exception as e:
         st.error(f"❌ 初始化失敗：{str(e)}")
@@ -36,12 +30,11 @@ if 'is_analyzed' not in st.session_state: st.session_state.is_analyzed = False
 if 'final_results' not in st.session_state: st.session_state.final_results = []
 
 def apply_change(old, new):
-    # 處理建議詞中可能有斜線的情況
     target_new = new.split(' / ')[0]
     st.session_state.current_text = st.session_state.current_text.replace(old, target_new)
     st.toast(f"✅ 已替換：{old} ➔ {target_new}")
 
-# --- 4. 強化版語感分析邏輯 ---
+# --- 4. 深度對比分析邏輯 ---
 def ai_data_analyze(text):
     if not text.strip():
         return []
@@ -53,38 +46,42 @@ def ai_data_analyze(text):
     待分析文字："{text}"
     
     【回傳規範】：
-    - 請嚴格以 JSON 陣列格式回傳。
-    - 必須包含：original (原詞), taiwan (在地建議), reason (調整理由), example (在地範例)。
-    - 若文字已完全符合台灣語感，請回傳 []。
+    1. 請嚴格以 JSON 陣列格式回傳。
+    2. 每個建議必須包含：
+       - "original": 原詞彙
+       - "taiwan": 台灣在地建議
+       - "reason": 深度對比說明。請務必解釋該詞在兩岸語意上的差異或誤區。
+         (例如：「很火」在大陸指受歡迎，但在台灣常指「很生氣」；「走心」在台灣有時指在意或鑽牛角尖。)
+       - "example": 提供一個台灣道地的使用範例句。
+    3. 若無建議則回傳 []。
     """
     try:
         response = model.generate_content(prompt)
-        # 使用正則表達式精準抓取 JSON 區塊，防止 AI 廢話導致白屏
-        match = re.search(r'\[\s*{.*}\s*\]', response.text, re.DOTALL)
+        match = re.search(r'\[\s*{{.*}}\s*\]', response.text, re.DOTALL)
         if match:
             return json.loads(match.group())
         return []
-    except Exception as e:
-        st.warning(f"⚠️ 掃描遇到一點問題，可能是網路波動，請再試一次。")
+    except Exception:
         return []
 
 # --- 5. 介面呈現 ---
 st.title("📱 語感守護者")
-st.markdown("#### 運用 AI 大數據技術，協助您的文字更貼近台灣在地習慣")
+st.markdown("#### 運用 AI 技術，深度解析兩岸語法差異與誤區")
 
 c1, c2 = st.columns([1, 1.2])
 
 with c1:
     with st.container():
         st.subheader("📝 輸入內容")
-        # 這裡的 value 綁定 session_state，確保修正後內容會同步更新
-        u_input = st.text_area("請輸入文字：", height=250, value=st.session_state.current_text if st.session_state.current_text else "這個套路真的很火，但他一直在背後蛐蛐我。", key="text_input")
+        u_input = st.text_area("請輸入文字：", height=250, 
+                               value=st.session_state.current_text if st.session_state.current_text else "這個套路真的很火，但他一直在背後蛐蛐我。", 
+                               key="text_input")
         
         col_btn1, col_btn2 = st.columns(2)
         with col_btn1:
-            if st.button("🚀 執行語感掃描", use_container_width=True):
+            if st.button("🚀 執行深度掃描", use_container_width=True):
                 if u_input:
-                    with st.spinner("語感顧問正在調閱大數據分析中..."):
+                    with st.spinner("語感顧問正在分析語意誤區..."):
                         st.session_state.current_text = u_input
                         st.session_state.final_results = ai_data_analyze(u_input)
                         st.session_state.is_analyzed = True
@@ -99,14 +96,12 @@ with c1:
 
     if st.session_state.is_analyzed:
         st.write("---")
-        st.subheader("📋 修正後的文字")
+        st.subheader("📋 修正後的文字預覽")
         st.code(st.session_state.current_text, language=None)
-        st.caption("💡 點擊右上方圖示即可快速複製。")
 
 with c2:
-    st.subheader("💡 語感調整建議")
+    st.subheader("💡 語意對比建議")
     if st.session_state.is_analyzed:
-        # 只顯示目前文字中還存在的錯誤
         active_results = [r for r in st.session_state.final_results if r['original'] in st.session_state.current_text]
         
         if not active_results:
@@ -117,13 +112,12 @@ with c2:
                     apply_change(item['original'], item['taiwan'])
                 st.rerun()
                 
-            st.warning(f"🔔 發現 {len(active_results)} 處建議調整的詞彙：")
             for item in active_results:
                 with st.expander(f"📌 在地建議：{item['original']} ➔ {item['taiwan']}", expanded=True):
-                    st.write(f"📘 **理由：** {item['reason']}")
+                    st.write(f"📘 **語意解析：** {item['reason']}")
                     st.caption(f"📖 **在地範例：** {item['example']}")
                     if st.button(f"套用：{item['taiwan']}", key=f"btn_{item['original']}"):
                         apply_change(item['original'], item['taiwan'])
                         st.rerun()
     else:
-        st.info("掃描後將在此顯示調整建議。")
+        st.info("等待掃描結果，將為您解析語意差異。")
