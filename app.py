@@ -1,45 +1,54 @@
 import streamlit as st
 import pandas as pd
 
-# 1. 核心語感轉換字典 (擴展更多常用術語)
-DEFAULT_TERMS = {
+# 1. 核心語感轉換字典
+TAIWAN_TERMS = {
     "視頻": "影片", "軟件": "軟體", "硬盤": "硬碟", "質量": "品質",
     "優化": "最佳化", "支持": "支援", "菜單": "選單", "激活": "啟用",
     "打印": "列印", "實時": "即時", "信號": "訊號", "信息": "訊息",
-    "屏幕": "螢幕", "內存": "記憶體", "鼠標": "滑鼠", "充電寶": "行動電源"
+    "屏幕": "螢幕", "內存": "記憶體", "鼠標": "滑鼠", "充電寶": "行動電源",
+    "網絡": "網路", "程序": "程式", "服務器": "伺服器", "硬體": "硬體"
 }
 
-# 頁面配置：讓介面看起來更專業
-st.set_page_config(page_title="台灣語感術語轉換器", layout="wide")
+# 頁面配置
+st.set_page_config(page_title="台灣語感轉換器", layout="wide")
 
-# 自定義 CSS：讓介面更顯白、乾淨
+# 2. 修正後的 CSS (確保 unsafe_allow_html 為 True)
 st.markdown("""
     <style>
-    .main { background-color: #ffffff; }
-    .stTextArea textarea { font-size: 16px !important; border-radius: 10px !important; }
-    .stButton button { width: 100%; border-radius: 20px; background-color: #007bff; color: white; }
+    .stApp { background-color: #ffffff; }
+    .main { padding-top: 2rem; }
+    .stTextArea textarea { font-size: 1.1rem !important; border-radius: 8px !important; border: 1px solid #e0e0e0 !important; }
+    div.stButton > button { 
+        width: 100%; 
+        background-color: #007bff; 
+        color: white; 
+        border-radius: 5px; 
+        height: 3em;
+        font-weight: bold;
+    }
+    div.stButton > button:hover { border: 1px solid #0056b3; background-color: #0056b3; color: white; }
     </style>
-""", unsafe_allow_stdio=True)
+""", unsafe_allow_html=True)
 
-# 2. 側邊欄：管理功能
+# 3. 側邊欄：顯示對照表
 with st.sidebar:
-    st.header("⚙️ 設定與管理")
-    st.info("目前模式：本地高速運行 (No Cloud)")
-    
-    st.subheader("術語對照表")
-    # 將字典轉為 DataFrame 顯示，看起來更專業
-    df = pd.DataFrame(list(DEFAULT_TERMS.items()), columns=['大陸術語', '台灣語感'])
-    st.dataframe(df, height=400, use_container_width=True)
+    st.title("⚙️ 術語管理")
+    st.write("目前採本地運作模式，不連接雲端資料庫。")
+    st.divider()
+    st.subheader("目前支援的轉換")
+    df = pd.DataFrame(list(TAIWAN_TERMS.items()), columns=['大陸用語', '台灣在地語感'])
+    st.dataframe(df, use_container_width=True, hide_index=True)
 
-# 3. 主界面布局
+# 4. 主介面
 st.title("🇹🇼 台灣語感 (Taiwanese Style) 轉換器")
-st.caption("自動修正大陸用語，恢復台灣在地語感，適用於文案、報告與程式註解。")
+st.write("將文字貼在左側，系統將自動套用台灣常用術語對照。")
 
 col1, col2 = st.columns(2)
 
 with col1:
     st.subheader("原始文字")
-    input_text = st.text_area("在此輸入或貼上內容...", placeholder="例如：這個視頻的質量優化得很好...", height=350)
+    input_text = st.text_area("請在此輸入內容...", placeholder="例如：這個視頻的質量優化得不錯...", height=400)
 
 with col2:
     st.subheader("轉換結果")
@@ -47,23 +56,19 @@ with col2:
     # 執行轉換邏輯
     output_text = input_text
     if input_text:
-        for cn, tw in DEFAULT_TERMS.items():
+        for cn, tw in TAIWAN_TERMS.items():
             output_text = output_text.replace(cn, tw)
     
-    st.text_area("自動轉換後的內容...", value=output_text, height=350, key="output")
+    st.text_area("自動轉換後：", value=output_text, height=400)
 
-# 4. 底部功能鍵
+# 功能操作區
 st.divider()
 c1, c2, c3 = st.columns([1, 1, 1])
 
-if c1.button("✨ 一鍵優化語感"):
-    st.toast("轉換完成！")
+if c1.button("✨ 執行語感優化"):
+    st.toast("已完成語感轉換！")
 
-if c2.button("📋 複製結果"):
-    st.write("請直接從右側文字框全選複製 (Ctrl+A / Ctrl+C)")
-
-if c3.button("🧹 清空內容"):
+if c2.button("🧹 清除全部內容"):
     st.rerun()
 
-# 頁尾資訊
-st.caption("💡 提示：此版本不經過任何雲端 API，保護您的資料隱私且反應最快。")
+st.caption("版本說明：這是一個完全在本地運行的編輯器，不涉及雲端存取，速度最快且最穩定。")
